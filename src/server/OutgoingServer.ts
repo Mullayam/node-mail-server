@@ -3,6 +3,13 @@ import { NewOutgoingMailHandler } from "../services/OutgoingMailHandler";
 
 import { Logging } from "../lib/logs";
 import { white } from "colorette";
+import { readFileSync } from "fs";
+
+// Make Sure to use TLS
+const options = {
+    key: readFileSync(process.env.TLS_PRIVATE_KEY_PATH as string,"utf8"),
+    cert: readFileSync(process.env.TLS_CERTFICATE_PATH as string,"utf8")
+}
 
 export class OutgoingServerConfig {
     private readonly MAX_EMAILS_PER_MINUTE = Number(process.env.MAX_EMAILS_PER_MINUTE) || 5;
@@ -21,8 +28,9 @@ export class OutgoingServerConfig {
             logger: false,
             secure: false,
             name: this.host,
-            // key: "-----BEGIN PRIVATE KEY-----\nMIIEpAIBAAKCAQEA1mT5Oo5+DwTt0wV3KZ0K0V9G\n-----END PRIVATE KEY-----\n",
-            // cert:"",
+            //Enable TLS
+            // key: options.key,
+            // cert:options.cert,
             banner: `220 ${this.host} ESMTP NodeSMTP Server is Ready`,
             disabledCommands: [""],
             authMethods: ["PLAIN", "LOGIN", "CRAM-MD5"],

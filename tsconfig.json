@@ -17,6 +17,6 @@
 		"strict": true,
 		"skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "main.ts"],
+  "include": ["src/**/*.ts", "src/**/*.ini"],
   "exclude": ["node_modules", "build"]
 }

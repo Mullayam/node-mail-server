@@ -13,7 +13,6 @@
     "colorette": "^2.0.20",
     "dkim-signer": "^0.2.2",
     "glob": "^11.0.1",
-    "ini": "^5.0.0",
     "mailauth": "^4.8.2",
     "mailparser": "^3.7.2",
     "mime-types": "^2.1.35",
@@ -26,7 +25,6 @@
   },
   "devDependencies": {
     "@types/dkim-signer": "^0.2.5",
-    "@types/ini": "^4.1.1",
     "@types/mailparser": "^3.4.5",
     "@types/mime-types": "^2.1.4",
     "@types/node": "^22.13.1",
