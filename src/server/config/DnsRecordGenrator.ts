@@ -26,9 +26,9 @@ export class DNSRecordGenerator {
         52: "TLSA",
     };
 
-    constructor(domain: string, mailServer: string, dkimSelector: string = "default") {
+    constructor(domain: string,   dkimSelector: string = "default") {
         this.domain = domain;
-        this.mailServer = mailServer;
+        this.mailServer = process.env.MAIL_HOST;
         this.dkimSelector = dkimSelector;
     }
     private formatDkimPublicKey(publicKey: string): string {

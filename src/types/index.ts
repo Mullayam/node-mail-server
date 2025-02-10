@@ -4,6 +4,7 @@ type ENV = {
     MAX_EMAILS_PER_MINUTE: string
     TLS_PRIVATE_KEY_PATH: string
     TLS_CERTFICATE_PATH: string
+    [key: string]: string
 }
 declare global {
     namespace NodeJS {

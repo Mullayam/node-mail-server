@@ -54,29 +54,7 @@ class OutgoingMailHandler {
 
         return callback();
     }
-    async HandleNewMail(stream: SMTPServerDataStream, session: SMTPServerSession, callback: (err?: Error | null | undefined) => void): Promise<void> {
-        let mailchunks = "";
-        stream.on("data", (chunk) => mailchunks += chunk.toString());
-        stream.on("end", async () => {
 
-            // Handle Incoming mail 
-            const parsedEmailData = await MailConfig.ParseEmail(mailchunks);
-
-            const MAIL_FROM = (session.envelope.mailFrom && session.envelope.mailFrom.address) as string
-            const RCPT_TO = session.envelope.rcptTo.map((v) => v.address);
-
-
-
-            const successMessage = `Outgoing mail Added To Queue  localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${MAIL_FROM} to ${session.envelope.rcptTo.map((v) => v.address).join(",")}`;
-
-            // Send to Queue which processes the mail or You can Use Relay 
-            // Use processOutgoingWithQueueMailDirectDelivery or processOutgoingMailWithTransporterDirectDelivery function or use your own
-            // use parsedEmailData as emailData and your required details to send the mail
-
-            callback()
-            return
-        });
-    }
     async HandleMailFrom(address: SMTPServerAddress, session: SMTPServerSession, callback: (err?: Error | null | undefined) => void): Promise<void> {
         try {
             let message = "";
@@ -107,7 +85,6 @@ class OutgoingMailHandler {
 
                 message = `Outgoing mail localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${mailFrom} to ${recipientMail}`;
                 // use MAX_EMAILS_PER_MINUTE , prevent Spam Protection ,using of bulk mails can down your server and IP Reputation
-
                 return callback()
 
             }
@@ -123,7 +100,57 @@ class OutgoingMailHandler {
         }
 
     }
+    async HandleNewMail(stream: SMTPServerDataStream, session: SMTPServerSession, callback: (err?: Error | null | undefined) => void): Promise<void> {
+        let mailchunks = "";
+        stream.on("data", (chunk) => mailchunks += chunk.toString());
+        stream.on("end", async () => {
 
+            // Handle Incoming mail 
+            const parsedEmailData = await MailConfig.ParseEmail(mailchunks);
+
+            const MAIL_FROM = (session.envelope.mailFrom && session.envelope.mailFrom.address) as string
+            const RCPT_TO = session.envelope.rcptTo.map((v) => v.address);
+
+
+
+            const successMessage = `Outgoing mail Added To Queue  localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${MAIL_FROM} to ${session.envelope.rcptTo.map((v) => v.address).join(",")}`;
+
+            // Send to Queue which processes the mail or You can Use Relay
+            // Use processOutgoingWithQueueMailDirectDelivery or processOutgoingMailWithTransporterDirectDelivery function or use your own
+            // use parsedEmailData as emailData and your required details to send the mail
+
+            // EXAMPLE, filter all reciepeint and send the mail, remove duplicates
+            // let totalRecipients = [...data.to, ...(data.cc || []), ...(data.bcc || [])];
+            // totalRecipients = Array.from(new Set(totalRecipients));
+            // const groupedRecipients = MailConfig.groupRecipientsByDomain(totalRecipients)
+            // for await (const [domain, recipients] of Object.entries(groupedRecipients)) {
+            //     try {
+            //         const mxServer = await MailConfig.checkConnections(domain)
+            //         if (!mxServer) {
+            //             console.error(`❌ No MX server found for ${domain}`)
+            //             continue;
+            //         }
+
+            //         const response = await MailConfig.createtransporter(mxServer.host, mxServer.port).sendMail({
+            //              // extra data like to,from,body
+            //              // Dkim Part is required otherwise mail willl rejected
+            //             // dkim: {
+            //             //     domainName: domain,
+            //             //     keySelector: "default",
+            //             //     privateKey: PVT_KEY
+            //             // }
+            //         })
+            //         console.log(`Mail Successfully Delivered`)
+            //     } catch (error: any) {
+            //         console.log(`Delivery Attempt Failed` + error.message)
+
+
+            //     }
+            // }
+            callback()
+            return
+        });
+    }
     private async processOutgoingWithQueueMailDirectDelivery(mailfrom: string, recipient: string[], subject: string, emailData: string) {
 
         // Send to Queue which processes the mail and use your required delivery method and data 
@@ -148,19 +175,9 @@ class OutgoingMailHandler {
         }
         return null; // No connection was successful
     }
-    private async processOutgoingMailWithTransporterDirectDelivery(mailfrom: string, recipient: string[], subject: string, emailData: string) {
-        const self = this
 
-        recipient.forEach(async (v) => {
-            const domain = MiscellaneousHelper.extractDomainFromEmail(v)
-            const mxRecords = await dns.resolveMx(domain).then((res) => res.map((v) => v.exchange));
-            const result = await self.checkConnections(mxRecords)
-            if (!result) return
-            const transporter = await MailConfig.createTransporter(result.host, result.port)
-            await MailConfig.send(transporter, emailData)
-        })
 
-    }
+    // for testing and knowledge purpose
     private generateDKIMSignature() {
 
         // Receive all data through paramas and generate signature and send it for delivery 

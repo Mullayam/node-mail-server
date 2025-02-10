@@ -2,6 +2,8 @@ import nodemailer from "nodemailer";
 import MailComposer from 'nodemailer/lib/mail-composer'
 import Mail from 'nodemailer/lib/mailer';
 import { MailParserOptions, ParsedMail, simpleParser, Source, MailParser } from "mailparser"
+import { DNSChecker } from "./DnsChecker";
+import { Logging } from "@/lib/logs";
 
 export let parser = new MailParser();
 
@@ -17,19 +19,37 @@ export class MailConfig {
 
         return simpleParser(source, options);;
     }
-    static async createTransporter(host: string, port: number = 25): Promise<nodemailer.Transporter> {
+    static createtransporter(host: string, port: number = 25) {
         return nodemailer.createTransport({
             host,
-            port: port,
+            port,
             secure: false,
         });
     }
-    static async send(transporter: nodemailer.Transporter, emailData: string) {
-        return transporter.sendMail({
-            raw: emailData,
-        }, (err, info) => {
-            if (err) console.error("Error sending mail:", err);
-            else console.log("Email sent successfully!", info);
+    static async checkConnections(host: string): Promise<{ host: string; port: number } | null> {
+        for (const port of [25, 587, 465]) {
+            try {
+                const exchange = await DNSChecker.getMXRecords(host);
+                if (!exchange) {
+                    return null
+                }
+                return { host: exchange, port };
+            } catch (error) {
+                Logging.dev(`❌ Failed to connect to ${host}:${port}`, "error");
+            }
+        }
+        return null;
+    }
+    static groupRecipientsByDomain(recipients: string[]): Record<string, string[]> {
+        const domainGroups: Record<string, string[]> = {};
+        recipients.forEach(email => {
+            const domain = email.split("@")[1];
+            if (!domainGroups[domain]) {
+                domainGroups[domain] = [];
+            }
+            domainGroups[domain].push(email);
         });
+
+        return domainGroups;
     }
 }

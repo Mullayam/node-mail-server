@@ -14,37 +14,16 @@ export class DNSChecker {
     this.domain = domain;
     this.dkimSelector = dkimSelector;
   }
-
-  signEmail(privateKey: string, rawEmail?: string,): string {
-    const DKIMSign = require("dkim-signer").DKIMSign;
-
-    const rfc822message = "Subject: test\r\n\r\nHello world";
-
-    const dkimOptions = {
-      domainName: "cirrusmail.cloud",
-      keySelector: "dkim",
-      privateKey,
-    };
-
-    return DKIMSign(rfc822message, dkimOptions);
-
-    // const DKIMSignature = require('dkim-signature');
-    // const signature = new DKIMSignature({
-    //     domain: 'example.test',
-    //     selector: 'default',
-    //     algorithm: 'rsa-sha256',
-    //     headers: ['from', 'to', 'date', 'subject'],
-    //     bodyHash: '2jmj7l5rSw0yVb/vlWAYkK/YBwk=',
-    //     data: '47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='
-    // })
-    // return signature.toString();
-
-    // const privateKey = crypto.readFileSync('./keys/dkim_private.pem', 'utf8');
-    // const signer = crypto.createSign('RSA-SHA256');
-    // signer.update(rawEmail);
-    // const signature = signer.sign(privateKey, 'base64');
-    // return `${rawEmail}\nDKIM-Signature: ${signature}`;
-  }
+  static async getMXRecords(domain: string) {
+    try {
+        const records = await dns.resolveMx(domain);
+        records.sort((a, b) => a.priority - b.priority); // Sort by priority
+        return records[0].exchange; // Return primary mail server
+    } catch (error) {
+        console.error(`❌ Failed to fetch MX records for ${domain}:`, error);
+        return null;
+    }
+}
 
 
   /**
