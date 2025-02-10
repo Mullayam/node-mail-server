@@ -36,7 +36,10 @@ We can do it one, but we have to manage incoming and outgoing in same file, whic
 # DNS Records Configuration
 
 ### How to genrate DNS Records
-
+1.
+- ```bash chmod +x run.sh```
+- ```bash ./run.sh```
+2 .
 - Go to src -> start.ts
 
 - Open and replace `your_domain` with your domain name

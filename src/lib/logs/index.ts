@@ -28,17 +28,17 @@ class Logger {
             return console.log(greenBright(`[${Logger.appName}] ${yellow(process.pid)} - ${white(moment().format('DD/MM/YYYY hh:mm:ss A'))}, [${(type).toUpperCase()}] ${text}`))
         }
         if (type === "error") {
-            return console.log(red(`[${Logger.appName}] ${process.pid} - ${white(moment().format('DD/MM/YYYY hh:mm:ss A'))}, [${(type).toUpperCase()}] ${text} console.log`))
+            return console.log(red(`[${Logger.appName}] ${process.pid} - ${white(moment().format('DD/MM/YYYY hh:mm:ss A'))}, [${(type).toUpperCase()}] ${text}`))
         }
         if (type === "debug") {
-            console.log(bold(`[${Logger.appName}] ${process.pid} - ${white(moment().format('DD/MM/YYYY hh:mm:ss A'))}, [${(type).toUpperCase()}] ${text} console.log`))
+            console.log(bold(`[${Logger.appName}] ${process.pid} - ${white(moment().format('DD/MM/YYYY hh:mm:ss A'))}, [${(type).toUpperCase()}] ${text}`))
             return process.exit(1)
         }
         if (type === "alert") {
-            console.log(magenta(`[${Logger.appName}] ${yellow(process.pid)} - ${white(moment().format('DD/MM/YYYY hh:mm:ss A'))}, [${(type).toUpperCase()}] ${text}console.log`))
+            console.log(magenta(`[${Logger.appName}] ${yellow(process.pid)} - ${white(moment().format('DD/MM/YYYY hh:mm:ss A'))}, [${(type).toUpperCase()}] ${text}`))
         }
         if (type === "notice") {
-            return console.log(yellow(`[${Logger.appName}] ${process.pid} - ${white(moment().format('DD/MM/YYYY hh:mm:ss A'))}, [${(type).toUpperCase()}] ${text}console.log`))
+            return console.log(yellow(`[${Logger.appName}] ${process.pid} - ${white(moment().format('DD/MM/YYYY hh:mm:ss A'))}, [${(type).toUpperCase()}] ${text}`))
         }
     };
     /**

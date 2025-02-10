@@ -1,5 +1,6 @@
 import { DNSRecordType, RecordTypeRespose } from "../../interfaces/dns.interface";
 import crypto from "crypto";
+import dns from 'dns/promises';
 
 
 export class DNSRecordGenerator {
@@ -73,13 +74,29 @@ export class DNSRecordGenerator {
 
         return `ARC-Seal: a=rsa-sha256; d=${this.domain}; s=${this.dkimSelector}; b=${signature}`;
     }
-
+    private isIPAddress(value: string): boolean {
+        return /^(\d{1,3}\.){3}\d{1,3}$/.test(value);
+    }
     /**
      * Generates SPF record allowing only the mail server to send emails.
      */
-    generateSPF() {
-        const string = `v=spf1 include:${this.mailServer} ~all`;
-        return this.formatRecords("TXT", this.domain, string);
+   async generateSPF() {
+        let spfRecord = "v=spf1";
+
+        if (this.isIPAddress(this.mailServer)) {
+            spfRecord += ` a mx ip4:${this.mailServer}`;
+        }
+        try {
+            await dns.lookup(this.mailServer).then(({ address }) => {
+                spfRecord += ` a mx ip4:${address}`;
+            })
+
+        } catch (error) {
+            spfRecord += ` include:${this.mailServer}`;
+        }
+
+        spfRecord += " ~all";
+        return this.formatRecords("TXT", this.domain, spfRecord);
 
     }
 
@@ -151,7 +168,7 @@ export class DNSRecordGenerator {
     /**
      * Generates all records for a domain.
      */
-    generateAllRecords(): {
+    async generateAllRecords(): Promise<{
         SPF: RecordTypeRespose;
         DKIM: {
             privateKey: string;
@@ -160,11 +177,11 @@ export class DNSRecordGenerator {
         };
         DMARC: RecordTypeRespose;
         MX: RecordTypeRespose;
-    } {
+    }> {
         const { dkimRecord, privateKey } = this.generateDKIM();
 
         return {
-            SPF: this.generateSPF(),
+            SPF: await this.generateSPF(),
             DKIM: {
                 privateKey,
                 selector: this.dkimSelector,
