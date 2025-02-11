@@ -83,7 +83,7 @@ func newRedisClient(uri string) (*IRedisClient, error) {
 
 func main() {
 
-	client := MakeNewRedisClient("localhost:6379")
+	client := MakeNewRedisClient("redis://localhost:6379")
 	fmt.Println("Connected to Redis")
 	sub := client.rdb.Subscribe(ctx, subscriptionChannel)
 	status := sub.Ping(ctx)
