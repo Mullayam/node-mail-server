@@ -120,17 +120,23 @@ class OutgoingMailHandler {
             // use parsedEmailData as emailData and your required details to send the mail
 
             // EXAMPLE, filter all reciepeint and send the mail, remove duplicates
+            const mxCache = new Map<string, { host: string; port: number }>();
+
             // let totalRecipients = [...data.to, ...(data.cc || []), ...(data.bcc || [])];
             // totalRecipients = Array.from(new Set(totalRecipients));
             // const groupedRecipients = MailConfig.groupRecipientsByDomain(totalRecipients)
             // for await (const [domain, recipients] of Object.entries(groupedRecipients)) {
             //     try {
-            //         const mxServer = await MailConfig.checkConnections(domain)
-            //         if (!mxServer) {
-            //             console.error(`❌ No MX server found for ${domain}`)
-            //             continue;
-            //         }
+                // let mxServer = mxCache.get(domain);
 
+                // if (!mxServer) {
+                //     mxServer = await MailConfig.checkConnections(domain);
+                //     if (!mxServer) {
+                //         LogsServices.saveMailLogs(data.from, "error", "Delivery Attempt Failed", `❌ No MX server found for ${domain}`);
+                //         continue;
+                //     }
+                //     mxCache.set(domain, mxServer);
+                // }
             //         const response = await MailConfig.createtransporter(mxServer.host, mxServer.port).sendMail({
             //              // extra data like to,from,body
             //              // Dkim Part is required otherwise mail willl rejected
