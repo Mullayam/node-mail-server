@@ -7,8 +7,7 @@ This project started as a fun experiment but has grown into something more. Righ
 -   **Mail Exchanger (IMAP)** – Use Gmail, Outlook, Yahoo, or Hotmail to send and receive emails.
 -   **Extra Features** – SMTP relay, IP/domain whitelisting & blacklisting.
 -   **AI Email Optimization** – Smart suggestions to improve email performance.
--   **Security & Anti-Spam** – AI-driven spam filtering and fraud detection.
--   **Email Campaigns** – Create and send emails with dedicated templates.
+-   **Security & Anti-Spam** – AI-driven spam filtering and fraud detection.-   
 -   **User Controls** – Rate limits, storage alerts, email forwarding, and aliases.
 -   **Calendar Integration** – Works with Google Meet, Teams, and Cal.com.
 -   **Developer API** – Easy-to-use API for automating emails in your apps.
