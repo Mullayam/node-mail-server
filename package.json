@@ -12,6 +12,7 @@
   "dependencies": {
     "colorette": "^2.0.20",
     "dkim-signer": "^0.2.2",
+    "dotenv": "^16.4.7",
     "glob": "^11.0.1",
     "mailauth": "^4.8.2",
     "mailparser": "^3.7.2",

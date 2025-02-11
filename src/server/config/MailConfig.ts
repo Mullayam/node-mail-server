@@ -3,7 +3,7 @@ import MailComposer from 'nodemailer/lib/mail-composer'
 import Mail from 'nodemailer/lib/mailer';
 import { MailParserOptions, ParsedMail, simpleParser, Source, MailParser } from "mailparser"
 import { DNSChecker } from "./DnsChecker";
-import { Logging } from "@/lib/logs";
+import { Logging } from "../../lib/logs";
 
 export let parser = new MailParser();
 

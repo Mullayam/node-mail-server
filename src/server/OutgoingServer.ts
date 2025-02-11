@@ -6,10 +6,10 @@ import { white } from "colorette";
 import { readFileSync } from "fs";
 
 // Make Sure to use TLS
-const options = {
-    key: readFileSync(process.env.TLS_PRIVATE_KEY_PATH as string,"utf8"),
-    cert: readFileSync(process.env.TLS_CERTFICATE_PATH as string,"utf8")
-}
+// const options = {
+//     key: readFileSync(process.env.TLS_PRIVATE_KEY_PATH as string,"utf8"),
+//     cert: readFileSync(process.env.TLS_CERTFICATE_PATH as string,"utf8")
+// }
 
 export class OutgoingServerConfig {
     private readonly MAX_EMAILS_PER_MINUTE = Number(process.env.MAX_EMAILS_PER_MINUTE) || 5;
