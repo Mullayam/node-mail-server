@@ -93,10 +93,10 @@ class IncomingMailHandler {
 
                 // Dont Forget to check the RCPT TO domain is exist or not in your System
 
-                return callback();
+                return callback(null);
             }
 
-            return callback();
+            return callback(null);
         } catch (error) {
             if (error instanceof Error) {
                 return callback(new Error(error.message));
@@ -125,8 +125,8 @@ class IncomingMailHandler {
 
             // Do something with the parsed email data (e.g., save to database,  etc.)
 
-            callback();
-            return;
+         
+            return    callback(null);;
         });
     }
 }

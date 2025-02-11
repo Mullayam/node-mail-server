@@ -43,7 +43,7 @@ class OutgoingMailHandler {
 
         Logging.dev("Client Connected " + session.id);
 
-        return callback(); // Accept the connection
+        return callback(null); // Accept the connection
     }
     HandleConnectionClose(session: SMTPServerSession, callback: (err?: Error | null | undefined) => void): void {
         // Must be disbabled in Production, can be allowed in development for testing Purpose
@@ -53,7 +53,7 @@ class OutgoingMailHandler {
         }
         Logging.dev("Client Disonnected " + session.id);
 
-        return callback();
+        
     }
 
     async HandleMailFrom(address: SMTPServerAddress, session: SMTPServerSession, callback: (err?: Error | null | undefined) => void): Promise<void> {
@@ -127,16 +127,11 @@ class OutgoingMailHandler {
 
             // await new NodeMailerMTA().useTransport(totalRecipients)
             
-            callback()
-            return
+            
+            return callback()
         });
     }
-    private async processOutgoingWithQueueMailDirectDelivery(mailfrom: string, recipient: string[], subject: string, emailData: string) {
-
-        // Send to Queue which processes the mail and use your required delivery method and data 
-
-
-    }
+   
     private async checkConnections(hosts: string[]): Promise<{ host: string; port: number } | null> {
         // You Can implement your own logic here for better Approach, It's just a simple example and It will work in most cases
         // I'm Noob 🙂 👉👈
@@ -159,7 +154,8 @@ class OutgoingMailHandler {
 
     // for testing and knowledge purpose
     private generateDKIMSignature() {
-
+        // This is for DEmo purpose if your are using (not recommended)Direct DNS based Delivery use it
+        
         // Receive all data through paramas and generate signature and send it for delivery 
         const emailBody = "Hello, this is a DKIM signed email.";
         const signedHeadersList = ["from", "subject", "date", "message-id", "content-type", "content-transfer-encoding", "mime-version"];

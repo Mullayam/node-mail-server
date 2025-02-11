@@ -1,3 +1,17 @@
+# This Project is Under Develepment
+
+A demo video on how to set up this project on a server is coming soon.
+
+This project started as a fun experiment but has grown into something more. Right now, it's a simple mail server for sending and receiving emails. Future updates will add:
+
+-   **Mail Exchanger (IMAP)** – Use Gmail, Outlook, Yahoo, or Hotmail to send and receive emails.
+-   **Extra Features** – SMTP relay, IP/domain whitelisting & blacklisting.
+-   **AI Email Optimization** – Smart suggestions to improve email performance.
+-   **Security & Anti-Spam** – AI-driven spam filtering and fraud detection.
+-   **Email Campaigns** – Create and send emails with dedicated templates.
+-   **User Controls** – Rate limits, storage alerts, email forwarding, and aliases.
+-   **Calendar Integration** – Works with Google Meet, Teams, and Cal.com.
+-   **Developer API** – Easy-to-use API for automating emails in your apps.
 # SMTP Server Setup Guide
 
 ### Prerequisites
@@ -167,3 +181,4 @@ TLS_CERTFICATE_PATH="/etc/letsencrypt/live/mail.domain.com/fullchain.pem"
 ### Use external tools:
 Go and Test Your Mail Server  here , it should be like in given Image https://mxtoolbox.com/diagnostic.aspx
 ![See image](image-3.png)
+
