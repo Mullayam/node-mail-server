@@ -83,7 +83,7 @@ func newRedisClient(uri string) (*IRedisClient, error) {
 
 func main() {
 
-	client := MakeNewRedisClient("rediss://default:AVNS_zI0FrxTBvcV5UqgQnBO@redis-39ff04df-mullayam06.a.aivencloud.com:20348")
+	client := MakeNewRedisClient("localhost:6379")
 	fmt.Println("Connected to Redis")
 	sub := client.rdb.Subscribe(ctx, subscriptionChannel)
 	status := sub.Ping(ctx)
