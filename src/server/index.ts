@@ -14,19 +14,19 @@ import { OutgoingServerConfig } from "./OutgoingServer";
  */
 
 export class SMTP_SERVICE {
-    private static _instance: SMTP_SERVICE | null = null;
-    private readonly MAIL_HOST = process.env.MAIL_HOST || "127.0.0.1";
-    constructor() {
-        const incomingServer = new IncomingServerConfig(this.MAIL_HOST);
-        const outgoingServer = new OutgoingServerConfig(this.MAIL_HOST);
+	private static _instance: SMTP_SERVICE | null = null;
+	private readonly MAIL_HOST = process.env.MAIL_HOST || "127.0.0.1";
+	constructor() {
+		const incomingServer = new IncomingServerConfig(this.MAIL_HOST);
+		const outgoingServer = new OutgoingServerConfig(this.MAIL_HOST);
 
-        incomingServer.start();
-        outgoingServer.start();
-    }
-   static Initialize() {
-        if (!SMTP_SERVICE._instance) {
-            SMTP_SERVICE._instance = new SMTP_SERVICE();
-        }
-        return SMTP_SERVICE._instance;
-    }
+		incomingServer.start();
+		outgoingServer.start();
+	}
+	static Initialize() {
+		if (!SMTP_SERVICE._instance) {
+			SMTP_SERVICE._instance = new SMTP_SERVICE();
+		}
+		return SMTP_SERVICE._instance;
+	}
 }

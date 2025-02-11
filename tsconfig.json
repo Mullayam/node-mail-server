@@ -1,14 +1,13 @@
 {
-  "compilerOptions": {
-    "target": "ES2023",
+	"compilerOptions": {
+		"target": "ES2023",
 		"experimentalDecorators": true,
 		"emitDecoratorMetadata": true,
 		"module": "NodeNext",
 		"moduleResolution": "NodeNext",
 		"baseUrl": "./",
 		"paths": {
-			"@/*": ["./src/*"],
-		 
+			"@/*": ["./src/*"]
 		},
 		"resolveJsonModule": true,
 		"outDir": "./build",
@@ -16,7 +15,7 @@
 		"forceConsistentCasingInFileNames": true,
 		"strict": true,
 		"skipLibCheck": true
-  },
-  "include": ["src/**/*.ts", "src/**/*.ini"],
-  "exclude": ["node_modules", "build"]
+	},
+	"include": ["src/**/*.ts", "src/**/*.ini"],
+	"exclude": ["node_modules", "build"]
 }
