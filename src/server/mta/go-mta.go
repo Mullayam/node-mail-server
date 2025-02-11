@@ -1,89 +1,218 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
-	"net"
-	"net/smtp"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
+
+	"net/mail"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rovergulf/mta"
 )
 
-var ctx = context.Background()
+type LoggingLevel string
+type EmailType string
+type LogType string
 
-func main() {
-	rdb := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	NewRedis(rdb)
-	for {
-		job, err := rdb.BLPop(ctx, 0*time.Second, "bull:email-job-queue:waiting").Result()
-		if err != nil {
-			log.Println("Error fetching job:", err)
-			continue
-		}
+// Define allowed values as constants
+const (
+	Alert             LoggingLevel = "alert"
+	Crit              LoggingLevel = "crit"
+	Error             LoggingLevel = "error"
+	Notice            LoggingLevel = "notice"
+	Info              LoggingLevel = "info"
+	Debug             LoggingLevel = "debug"
+	EmailTypeOutgoing EmailType    = "outgoing"
+	EmailTypeIncoming EmailType    = "incoming"
+)
 
-		if len(job) < 2 {
-			continue
-		}
-
-		var emailData Email
-		err = json.Unmarshal([]byte(job[1]), &emailData)
-		if err != nil {
-			log.Println("Error parsing email job data:", err)
-			continue
-		}
-		fmt.Println("📧 Processing Email:")
-
-		SendMail(emailData)
-
-	}
-}
-
-type RedisClient struct {
+type IRedisClient struct {
 	rdb *redis.Client
 }
-
-func (rdb *RedisClient) PublishLogs(logType string, event string, from string, message string) error {
-
-	logMessage := fmt.Sprintf("Email failed to send to %s: %s", from, message)
-
-	logs := struct {
-		LogType    string `json:"type"`
-		Event      string `json:"event"`
-		Message    string `json:"message"`
-		Timestamp  string `json:"timestamp"`
-		DomainName string `json:"domain_name"`
-	}{
-		LogType:    logType,
-		Event:      event,
-		Message:    logMessage,
-		Timestamp:  time.Now().Format(time.RFC3339),
-		DomainName: from[strings.LastIndex(from, "@")+1:],
-	}
-
-	logData, err := json.Marshal(logs)
-	if err != nil {
-		return fmt.Errorf("error marshaling log data: %v", err)
-	}
-
-	return rdb.rdb.Publish(ctx, "bull:email-job-queue:waiting", logData).Err()
+type BaseLogEntry struct {
+	Message    string `json:"message"`
+	DomainName string `json:"domain_name"`
+	Timestamp  string `json:"timestamp"`
 }
-func NewRedis(rdb *redis.Client) *RedisClient {
-	return &RedisClient{rdb: rdb}
+type LogMailsEntry struct {
+	BaseLogEntry
+	Type  LoggingLevel `json:"type"`
+	Event string       `json:"event"`
+}
+type LogEmailEntry struct {
+	BaseLogEntry
+	Type   EmailType `json:"type"`
+	Status string    `json:"status"`
+	Email  string    `json:"email"`
+}
+
+var ctx = context.Background()
+var subscriptionChannel = "OUTGOING_MAILS"
+
+var queue = make(chan string, 1000)
+
+func MakeNewRedisClient(uri string) *IRedisClient {
+	client, err := newRedisClient(uri)
+	if err != nil {
+		log.Fatalf("failed to create Redis client: %v", err)
+	}
+	return client
+}
+
+func newRedisClient(uri string) (*IRedisClient, error) {
+	options, err := redis.ParseURL(uri)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Redis URI: %v", err)
+	}
+
+	client := redis.NewClient(options)
+	if err := client.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("redis connection failed: %v", err)
+	}
+
+	return &IRedisClient{rdb: client}, nil
+}
+
+func main() {
+
+	client := MakeNewRedisClient("rediss://default:AVNS_zI0FrxTBvcV5UqgQnBO@redis-39ff04df-mullayam06.a.aivencloud.com:20348")
+	fmt.Println("Connected to Redis")
+	sub := client.rdb.Subscribe(ctx, subscriptionChannel)
+	status := sub.Ping(ctx)
+	fmt.Println("status:", status)
+	ch := sub.Channel()
+
+	var wg sync.WaitGroup
+
+	for i := 1; i <= runtime.NumCPU(); i++ {
+		wg.Add(1)
+		go client.Worker(&wg)
+	}
+
+	for msg := range ch {
+		select {
+		case queue <- msg.Payload:
+
+		default:
+			log.Println("queue full")
+		}
+	}
+
+	close(queue)
+	wg.Wait()
+}
+
+func (r *IRedisClient) Worker(wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for msg := range queue {
+		r.processBatch(msg)
+	}
+}
+
+func (r *IRedisClient) processBatch(batch string) {
+
+	var emailData Email
+	if err := json.Unmarshal([]byte(batch), &emailData); err != nil {
+		fmt.Println("error parsing email job data:: %w", err)
+	}
+	fmt.Println("📧 Processing Email:", emailData.To)
+	groupedRecipients := groupRecipientsByDomain(emailData.To)
+	for domain, recipients := range groupedRecipients {
+		mxRecords, err := r.getValue(domain)
+		if err != nil {
+			mxRecords, err = LookupMX(domain)
+			if err != nil {
+				logs := createFormattedLogMessage(LogType(Error), emailData.From, fmt.Sprintf("error getting MX records for domain %s: %s", domain, err.Error()), "SMTP Delivery Error")
+				r.publishMailLogs(logs)
+			}
+			r.setValue(domain, mxRecords)
+		}
+
+		for _, recipient := range recipients {
+			if err := SendMail(mxRecords, 25, emailData); err != nil {
+				logs := createFormattedLogMessage(LogType(Error), emailData.From, fmt.Sprintf("error sending email to %s: %s", recipient, err.Error()), "SMTP Delivery Error")
+				r.publishMailLogs(logs)
+
+				r.publisEmailDeliveryLogs(createFormattedLogMessage(LogType(EmailTypeOutgoing), emailData.From, fmt.Sprintf("error sending email to %s: %s", recipient, err.Error()), "SMTP Delivery Error"))
+			}
+		}
+
+	}
+
+}
+func createFormattedLogMessage(logType LogType, email string, message string, extra string) string {
+	var logEntry interface{}
+	if logType != LogType(EmailTypeIncoming) || logType != LogType(EmailTypeOutgoing) {
+		logEntry = LogMailsEntry{
+			BaseLogEntry: BaseLogEntry{
+				Message:    message,
+				Timestamp:  time.Now().Format(time.RFC3339),
+				DomainName: email[strings.LastIndex(email, "@")+1:],
+			},
+			Type:  LoggingLevel(logType),
+			Event: extra,
+		}
+	} else {
+		logEntry = LogEmailEntry{
+			BaseLogEntry: BaseLogEntry{
+				Message:    message,
+				Timestamp:  time.Now().Format(time.RFC3339),
+				DomainName: email[strings.LastIndex(email, "@")+1:],
+			},
+			Type:   EmailType(logType),
+			Status: extra,
+		}
+	}
+
+	// Marshal struct to JSON
+	logs, err := json.Marshal(logEntry)
+	if err != nil {
+		log.Fatalf("Failed to marshal logs: %v", err)
+	}
+
+	return string(logs)
+}
+func (r *IRedisClient) publishMailLogs(message string) {
+
+	if err := r.rdb.Publish(ctx, "::channel_for_mail:logs", message).Err(); err != nil {
+		log.Printf("Failed to publish step: %v", err)
+	}
+}
+func (r *IRedisClient) publisEmailDeliveryLogs(message string) {
+
+	if err := r.rdb.Publish(ctx, "::email:logs", message).Err(); err != nil {
+		log.Printf("Failed to publish step: %v", err)
+	}
+}
+func (r *IRedisClient) getValue(key string) (string, error) {
+	val, err := r.rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	return val, nil
+}
+
+func (r *IRedisClient) setValue(key string, value string) error {
+	err := r.rdb.Set(ctx, key, value, 0).Err()
+	return err
 }
 
 type Email struct {
-	From    string `json:"from"`
-	To      string `json:"to"`
-	Subject string `json:"subject"`
-	Body    string `json:"body"`
+	From    string   `json:"from"`
+	To      []string `json:"to"`
+	Subject string   `json:"subject"`
+	Body    string   `json:"body"`
 }
 type SMTPClient struct {
 	Host     string
@@ -92,84 +221,40 @@ type SMTPClient struct {
 	Password string
 }
 
-func LookupMX(email string) ([]*net.MX, error) {
-	domain := email[strings.LastIndex(email, "@")+1:]
-	mxRecords, err := net.LookupMX(domain)
+func MailParser(rawEmail string) {
+	msg, err := mail.ReadMessage(strings.NewReader(rawEmail))
 	if err != nil {
-		return nil, fmt.Errorf("MX lookup failed: %v", err)
+		log.Fatal("Error reading email:", err)
+	}
+	body := new(bytes.Buffer)
+	_, err = body.ReadFrom(msg.Body)
+	if err != nil {
+		log.Fatal("Error reading body:", err)
 	}
 
-	return mxRecords, nil
 }
+func SendMail(Host string, port int, emailData Email) error {
 
-func SendMail(email Email) error {
-	// Lookup MX records
-	mxRecords, err := LookupMX(email.To)
-	if err != nil || len(mxRecords) == 0 {
-		// publishLogs(email.From, "No MX records found")
-		return fmt.Errorf("No MX records found")
-	}
-
-	// Connect to SMTP server
-	for _, mx := range mxRecords {
-		addr := mx.Host + ":25"
-
-		log.Printf("Trying to connect to %s: %v", addr, nil)
-		conn, err := net.Dial("tcp", addr)
-		if err != nil {
-			log.Printf("Failed to connect to %s: %v", addr, err)
-			continue
-		}
-		defer conn.Close()
-
-		// Upgrade to TLS (STARTTLS)
-		tlsConn := tls.Client(conn, &tls.Config{ServerName: mx.Host})
-		client, err := smtp.NewClient(tlsConn, mx.Host)
-		if err != nil {
-			return fmt.Errorf("failed to create SMTP client: %v", err)
-		}
-		client.Hello(mx.Host)
-		// Send the email
-		if err := client.Mail(email.From); err != nil {
-			return fmt.Errorf("MAIL FROM command failed: %v", err)
-		}
-		if err := client.Rcpt(email.To); err != nil {
-			return fmt.Errorf("RCPT TO command failed for %s: %v", email.To, err)
-		}
-
-		wc, err := client.Data()
-		if err != nil {
-			return fmt.Errorf("DATA command failed: %v", err)
-		}
-
-		msg := fmt.Sprintf("Subject: %s\r\n\r\n%s", "subject", "Hello, this is a test email.")
-		_, err = wc.Write([]byte(msg))
-		if err != nil {
-			return fmt.Errorf("failed to write email body: %v", err)
-		}
-
-		wc.Close()
-		client.Quit()
-		fmt.Println("Email sent via", email.To)
-		log.Printf("Email successfully sent to %s via %s", email.To, mx.Host)
-		return nil
-	}
-
-	return fmt.Errorf("all MX connections failed")
-}
-func SMTPClients(Host string) error {
-
-	d := mta.Dialer{Host: Host, Port: 587}
+	d := mta.Dialer{Host: Host, Port: port}
 	d.TLSConfig = &tls.Config{InsecureSkipVerify: true}
+	s, err := d.Dial()
+	if err != nil {
+		log.Fatal(err)
+	}
+	s.Close()
 
 	msg := mta.NewMessage()
-	msg.SetAddressHeader("From", "mullayam06@cirrusmail.cloud", "Test MTA Sender")
-	msg.SetAddressHeader("To", "su@enjoys.in", "")
-	msg.SetHeader("Subject", "Hello!")
+	msg.SetAddressHeader("From", emailData.From, "Test MTA Sender")
+	for _, to := range emailData.To {
+		msg.SetAddressHeader("To", to, "")
+	}
+	msg.SetHeader("Subject", emailData.Subject)
 	msg.SetHeader("MIME-version: 1.0")
-	msg.SetBody("text/plain", "Hello Gophers!")
+	msg.SetBody("text/plain", emailData.Body)
 	if err := d.DialAndSend(msg); err != nil {
 		panic(err)
 	}
 	return nil
 }
+
+// GOOS=linux GOARCH=amd64 go build -o mta

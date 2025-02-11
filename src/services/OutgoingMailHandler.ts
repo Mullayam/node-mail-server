@@ -6,6 +6,7 @@ import { DNSChecker } from "../server/config/DnsChecker";
 import { MailConfig } from "../server/config/MailConfig";
 import { SpamFilteration } from "../server/config/SpamFilteration";
 import { SMTPServerAddress, SMTPServerAuthentication, SMTPServerAuthenticationResponse, SMTPServerDataStream, SMTPServerSession } from "smtp-server";
+import { NodeMailerMTA } from '@/server/mta/node-mta';
 const spam = new SpamFilteration();
 
 class OutgoingMailHandler {
@@ -120,39 +121,12 @@ class OutgoingMailHandler {
             // use parsedEmailData as emailData and your required details to send the mail
 
             // EXAMPLE, filter all reciepeint and send the mail, remove duplicates
-            const mxCache = new Map<string, { host: string; port: number }>();
 
             // let totalRecipients = [...data.to, ...(data.cc || []), ...(data.bcc || [])];
             // totalRecipients = Array.from(new Set(totalRecipients));
-            // const groupedRecipients = MailConfig.groupRecipientsByDomain(totalRecipients)
-            // for await (const [domain, recipients] of Object.entries(groupedRecipients)) {
-            //     try {
-                // let mxServer = mxCache.get(domain);
 
-                // if (!mxServer) {
-                //     mxServer = await MailConfig.checkConnections(domain);
-                //     if (!mxServer) {
-                //         LogsServices.saveMailLogs(data.from, "error", "Delivery Attempt Failed", `❌ No MX server found for ${domain}`);
-                //         continue;
-                //     }
-                //     mxCache.set(domain, mxServer);
-                // }
-            //         const response = await MailConfig.createtransporter(mxServer.host, mxServer.port).sendMail({
-            //              // extra data like to,from,body
-            //              // Dkim Part is required otherwise mail willl rejected
-            //             // dkim: {
-            //             //     domainName: domain,
-            //             //     keySelector: "default",
-            //             //     privateKey: PVT_KEY
-            //             // }
-            //         })
-            //         console.log(`Mail Successfully Delivered`)
-            //     } catch (error: any) {
-            //         console.log(`Delivery Attempt Failed` + error.message)
-
-
-            //     }
-            // }
+            // await new NodeMailerMTA().useTransport(totalRecipients)
+            
             callback()
             return
         });
