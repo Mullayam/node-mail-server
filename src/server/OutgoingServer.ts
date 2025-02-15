@@ -4,6 +4,7 @@ import { NewOutgoingMailHandler } from "../services/OutgoingMailHandler";
 import { Logging } from "../lib/logs";
 import { white } from "colorette";
 import { readFileSync } from "fs";
+import { SpamFilteration } from "./config/SpamFilteration";
 
 // Make Sure to use TLS
 // const options = {
@@ -14,14 +15,8 @@ import { readFileSync } from "fs";
 export class OutgoingServerConfig {
 	private readonly MAX_EMAILS_PER_MINUTE =
 		Number(process.env.MAX_EMAILS_PER_MINUTE) || 5;
-	protected greylist: Map<string, number>;
-	protected rateLimitMap: Map<string, number>;
-	private spamHistory: Map<string, number>;
-	constructor(private host: string) {
-		this.greylist = new Map();
-		this.rateLimitMap = new Map();
-		this.spamHistory = new Map();
-	}
+
+	constructor(private host: string) { }
 	private OUTGOING_SERVER_PORT = 587;
 	private getOptions(handlers: SMTPServerOptions): SMTPServerOptions {
 		return {
@@ -60,17 +55,15 @@ export class OutgoingServerConfig {
 		const self = this;
 		return {
 			async onConnect(session, callback) {
-				const clientIP = session.remoteAddress || "";
-				if (!self.greylist.has(clientIP)) {
-					self.rateLimitMap.set(clientIP, 0);
-					return callback(
-						new Error("Try Again Once More, Please! to make your IP whitelist"),
-					);
+				try {
+					await SpamFilteration.checkBlackListIp(session.remoteAddress, self.MAX_EMAILS_PER_MINUTE)
+					return callback(null);
+				} catch (error: any) {
+					return callback(error.message);
 				}
-
-				return callback();
+				 
 			},
-			onClose(session, callback) {},
+			onClose(session, callback) { },
 			onMailFrom(address, session, callback) {
 				return NewOutgoingMailHandler.HandleMailFrom(
 					address,
@@ -89,13 +82,6 @@ export class OutgoingServerConfig {
 				);
 			},
 			onData(stream, session, callback) {
-				const senderIP = session.remoteAddress || "";
-				const count = self.rateLimitMap.get(senderIP) || 0;
-				if (count > self.MAX_EMAILS_PER_MINUTE) {
-					return callback(new Error("452 Too many emails sent. Slow down!"));
-				}
-				self.rateLimitMap.set(senderIP, count + 1);
-
 				return NewOutgoingMailHandler.HandleNewMail(stream, session, callback);
 			},
 		};

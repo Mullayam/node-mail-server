@@ -7,7 +7,7 @@ This project started as a fun experiment but has grown into something more. Righ
 -   **Mail Exchanger (IMAP)** – Use Gmail, Outlook, Yahoo, or Hotmail to send and receive emails.
 -   **Extra Features** – SMTP relay, IP/domain whitelisting & blacklisting.
 -   **AI Email Optimization** – Smart suggestions to improve email performance.
--   **Security & Anti-Spam** – AI-driven spam filtering and fraud detection.-   
+-   **Security & Anti-Spam** – AI-driven spam filtering and fraud detection.
 -   **User Controls** – Rate limits, storage alerts, email forwarding, and aliases.
 -   **Calendar Integration** – Works with Google Meet, Teams, and Cal.com.
 -   **Developer API** – Easy-to-use API for automating emails in your apps.
@@ -83,7 +83,7 @@ Share your Mailserver hostname, who ever wants to use your server and tell them 
 - Set priority (e.g., 10 mail.yourdomain.com)
   ![MX Record Setup](image.png)
 
-# Anti-Spam DNS Records 
+# Anti-Spam DNS Records
 
 ![Anti-Spam DNS Records Setup](image-2.png)
 

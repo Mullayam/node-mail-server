@@ -2,9 +2,10 @@ import { SMTPServer, SMTPServerOptions } from "smtp-server";
 import { NewMailHandler } from "../services/IncomingMailHandler";
 import { Logging } from "../lib/logs";
 import { white } from "colorette";
+import { SpamFilteration } from "./config/SpamFilteration";
 
 export class IncomingServerConfig {
-	constructor(private host: string) {}
+	constructor(private host: string) { }
 	private INCOMING_SERVER_PORT = 25;
 	private getOptions(handlers: SMTPServerOptions): SMTPServerOptions {
 		return {
@@ -41,9 +42,15 @@ export class IncomingServerConfig {
 			async onConnect(session, callback) {
 				return callback(null);
 			},
-			onClose(session, callback) {},
-			onMailFrom(address, session, callback) {
-				return NewMailHandler.HandleMailFrom(address, session, callback);
+			onClose(session, callback) { },
+			async onMailFrom(address, session, callback) {
+				try {
+					await SpamFilteration.checkBlackListIp(session.remoteAddress, 3)
+					return NewMailHandler.HandleMailFrom(address, session, callback);
+
+				} catch (error) {
+
+				}
 			},
 			onRcptTo(address, session, callback) {
 				return NewMailHandler.HandleRcptTo(address, session, callback);

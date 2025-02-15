@@ -1,15 +1,53 @@
 import dns from "dns";
 import crypto from "crypto";
 import forge from "node-forge";
+
+const ipRequestCounts: Record<string, { count: number; timestamp: number }> = {};
+const TEMP_BLOCK_DURATION = 60 * 1000; // 1-minute temporary block
+const tempBlockedIPs: Record<string, number> = {}; // Stores temporarily blocked IPs with unblock timestamps
+const blockedIps = new Map();
 export class SpamFilteration {
-	protected greylist: Map<string, number>;
-	protected rateLimitMap: Map<string, number>;
-	private spamHistory: Map<string, number>;
-	protected MAX_EMAILS_PER_MINUTE = 2000;
-	constructor() {
-		this.greylist = new Map();
-		this.rateLimitMap = new Map();
-		this.spamHistory = new Map();
+
+
+	static async checkBlackListIp(ip: string, thresold: number) {
+		// Check if the IP is permanently blocked
+		if (blockedIps.has(ip)) {
+			throw new Error("Your IP is permanently blocked due to excessive requests.")
+		}
+		const now = Date.now();
+
+		// Check if the IP is temporarily blocked
+		if (tempBlockedIPs[ip] && tempBlockedIPs[ip] > now) {
+			// If the IP still sends messages while blocked, mark it as permanently blocked
+
+			blockedIps.set(ip, now);
+			delete tempBlockedIPs[ip]; // Remove from temporary block list
+			delete ipRequestCounts[ip]; // Reset any stored request data
+			throw new Error("Your IP has been permanently blocked due to continued abuse.")
+		} else if (tempBlockedIPs[ip]) {
+			// If the temporary block duration has passed, remove the IP from temp block list
+			delete tempBlockedIPs[ip];
+		}
+
+		// Rate limit check
+		if (!ipRequestCounts[ip]) {
+			ipRequestCounts[ip] = { count: 1, timestamp: now };
+		} else {
+			const { count, timestamp } = ipRequestCounts[ip];
+
+			if (now - timestamp < 1000) {
+				ipRequestCounts[ip].count++;
+
+				if (ipRequestCounts[ip].count > thresold) {
+					tempBlockedIPs[ip] = now + TEMP_BLOCK_DURATION; // Temporarily block IP
+					delete ipRequestCounts[ip]; // Reset request count
+					throw new Error("Your IP has been temporarily blocked due to excessive requests.")
+				}
+			} else {
+				ipRequestCounts[ip] = { count: 1, timestamp: now }; // Reset count for a new time window
+			}
+		}
+
 	}
 	checkRBL(ip: string): Promise<boolean> {
 		return new Promise((resolve) => {
@@ -17,13 +55,11 @@ export class SpamFilteration {
 			const rblDomain = `${reversedIP}.zen.spamhaus.org`;
 
 			dns.resolve4(rblDomain, (err) => {
-				if (err)
-					resolve(false); // Not blacklisted
+				if (err) resolve(false); // Not blacklisted
 				else resolve(true); // Blacklisted
 			});
 		});
 	}
-
 	checkSPF(domain: string, senderIP: string): Promise<boolean> {
 		return new Promise((resolve) => {
 			dns.resolveTxt(domain, (err, records) => {
