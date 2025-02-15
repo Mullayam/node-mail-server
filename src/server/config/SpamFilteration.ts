@@ -2,17 +2,18 @@ import dns from "dns";
 import crypto from "crypto";
 import forge from "node-forge";
 
-const ipRequestCounts: Record<string, { count: number; timestamp: number }> = {};
+const ipRequestCounts: Record<string, { count: number; timestamp: number }> =
+	{};
 const TEMP_BLOCK_DURATION = 60 * 1000; // 1-minute temporary block
 const tempBlockedIPs: Record<string, number> = {}; // Stores temporarily blocked IPs with unblock timestamps
 const blockedIps = new Map();
 export class SpamFilteration {
-
-
 	static async checkBlackListIp(ip: string, thresold: number) {
 		// Check if the IP is permanently blocked
 		if (blockedIps.has(ip)) {
-			throw new Error("Your IP is permanently blocked due to excessive requests.")
+			throw new Error(
+				"Your IP is permanently blocked due to excessive requests.",
+			);
 		}
 		const now = Date.now();
 
@@ -23,7 +24,9 @@ export class SpamFilteration {
 			blockedIps.set(ip, now);
 			delete tempBlockedIPs[ip]; // Remove from temporary block list
 			delete ipRequestCounts[ip]; // Reset any stored request data
-			throw new Error("Your IP has been permanently blocked due to continued abuse.")
+			throw new Error(
+				"Your IP has been permanently blocked due to continued abuse.",
+			);
 		} else if (tempBlockedIPs[ip]) {
 			// If the temporary block duration has passed, remove the IP from temp block list
 			delete tempBlockedIPs[ip];
@@ -41,13 +44,14 @@ export class SpamFilteration {
 				if (ipRequestCounts[ip].count > thresold) {
 					tempBlockedIPs[ip] = now + TEMP_BLOCK_DURATION; // Temporarily block IP
 					delete ipRequestCounts[ip]; // Reset request count
-					throw new Error("Your IP has been temporarily blocked due to excessive requests.")
+					throw new Error(
+						"Your IP has been temporarily blocked due to excessive requests.",
+					);
 				}
 			} else {
 				ipRequestCounts[ip] = { count: 1, timestamp: now }; // Reset count for a new time window
 			}
 		}
-
 	}
 	checkRBL(ip: string): Promise<boolean> {
 		return new Promise((resolve) => {
@@ -55,7 +59,8 @@ export class SpamFilteration {
 			const rblDomain = `${reversedIP}.zen.spamhaus.org`;
 
 			dns.resolve4(rblDomain, (err) => {
-				if (err) resolve(false); // Not blacklisted
+				if (err)
+					resolve(false); // Not blacklisted
 				else resolve(true); // Blacklisted
 			});
 		});

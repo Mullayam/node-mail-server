@@ -5,7 +5,7 @@ import { white } from "colorette";
 import { SpamFilteration } from "./config/SpamFilteration";
 
 export class IncomingServerConfig {
-	constructor(private host: string) { }
+	constructor(private host: string) {}
 	private INCOMING_SERVER_PORT = 25;
 	private getOptions(handlers: SMTPServerOptions): SMTPServerOptions {
 		return {
@@ -42,15 +42,12 @@ export class IncomingServerConfig {
 			async onConnect(session, callback) {
 				return callback(null);
 			},
-			onClose(session, callback) { },
+			onClose(session, callback) {},
 			async onMailFrom(address, session, callback) {
 				try {
-					await SpamFilteration.checkBlackListIp(session.remoteAddress, 3)
+					await SpamFilteration.checkBlackListIp(session.remoteAddress, 3);
 					return NewMailHandler.HandleMailFrom(address, session, callback);
-
-				} catch (error) {
-
-				}
+				} catch (error) {}
 			},
 			onRcptTo(address, session, callback) {
 				return NewMailHandler.HandleRcptTo(address, session, callback);

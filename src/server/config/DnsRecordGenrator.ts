@@ -76,17 +76,20 @@ export class DNSRecordGenerator {
 
 		return `ARC-Seal: a=rsa-sha256; d=${this.domain}; s=${this.dkimSelector}; b=${signature}`;
 	}
-	generateARCHeaders(  headers: Record<string, string>): Record<string, string> {
-        const timestamp = Math.floor(Date.now() / 1000);
-        const arcSeal = `ARC-Seal: i=1; a=rsa-sha256; t=${timestamp}; cv=none;
+	generateARCHeaders(headers: Record<string, string>): Record<string, string> {
+		const timestamp = Math.floor(Date.now() / 1000);
+		const arcSeal = `ARC-Seal: i=1; a=rsa-sha256; t=${timestamp}; cv=none;
               d=${this.domain}; s=arc-20240605;`;
 
-        const messageHash = crypto.createHash("sha256").update(arcSeal).digest("base64");
-        const arcMessageSignature = `ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=${this.domain}; s=arc-20240605;
+		const messageHash = crypto
+			.createHash("sha256")
+			.update(arcSeal)
+			.digest("base64");
+		const arcMessageSignature = `ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=${this.domain}; s=arc-20240605;
               bh=${messageHash};`;
 
-        return { arcSeal, arcMessageSignature };
-    }
+		return { arcSeal, arcMessageSignature };
+	}
 	private isIPAddress(value: string): boolean {
 		return /^(\d{1,3}\.){3}\d{1,3}$/.test(value);
 	}

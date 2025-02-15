@@ -16,7 +16,7 @@ export class OutgoingServerConfig {
 	private readonly MAX_EMAILS_PER_MINUTE =
 		Number(process.env.MAX_EMAILS_PER_MINUTE) || 5;
 
-	constructor(private host: string) { }
+	constructor(private host: string) {}
 	private OUTGOING_SERVER_PORT = 587;
 	private getOptions(handlers: SMTPServerOptions): SMTPServerOptions {
 		return {
@@ -56,14 +56,16 @@ export class OutgoingServerConfig {
 		return {
 			async onConnect(session, callback) {
 				try {
-					await SpamFilteration.checkBlackListIp(session.remoteAddress, self.MAX_EMAILS_PER_MINUTE)
+					await SpamFilteration.checkBlackListIp(
+						session.remoteAddress,
+						self.MAX_EMAILS_PER_MINUTE,
+					);
 					return callback(null);
 				} catch (error: any) {
 					return callback(error.message);
 				}
-				 
 			},
-			onClose(session, callback) { },
+			onClose(session, callback) {},
 			onMailFrom(address, session, callback) {
 				return NewOutgoingMailHandler.HandleMailFrom(
 					address,
