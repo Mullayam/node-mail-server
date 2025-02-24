@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { writeFileSync } from "fs";
 import { DNSRecordGenerator } from "./server/config/DnsRecordGenrator";
 import { Logging } from "./lib/logs";
