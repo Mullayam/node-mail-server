@@ -31,7 +31,7 @@ This project started as a fun experiment but has grown into something more. Righ
 
 #### Clone the Repository
 
-Use Any Package Manager, I'm just using `bun.sh`
+Use Any Package Manager, I'm just using bun, to install check out `bun.sh`
 
 1.  Install Dependencies First (Recommended) `bun install`
 
@@ -47,7 +47,7 @@ You will find two server file config (Incoming and Outgoing) and 2 server listen
 We can do it one, but we have to manage incoming and outgoing in same file, which is a mess, complicates the code. Moreover you have full controll to run multiple diffrente mail server like `mx.domain.com`, `mx2.domain.com` etc and for sending `{smtp,mail}.domain.com` (which ever is suitable).
 
 # DNS Records Configuration
-
+ Please Setup PTR(Reverse Lookup) and `MAIL_HOST`, `MAIL_SERVER_IP` first
 ### How to genrate DNS Records
 1.
 - ```bash chmod +x run.sh```
@@ -180,4 +180,31 @@ TLS_CERTFICATE_PATH="/etc/letsencrypt/live/mail.domain.com/fullchain.pem"
 ### Use external tools:
 Go and Test Your Mail Server  here , it should be like in given Image https://mxtoolbox.com/diagnostic.aspx
 ![See image](image-3.png)
+
+ 
+# iCalendar event for Nodemailer - Resources
+### Step 1: Enable Google Calendar API
+ - Go to the Google Cloud Console.
+ - Create a new project or select an existing one.
+ - Enable the Google Calendar API for the project.
+ - Create OAuth 2.0 credentials or a service account for authentication.
+ - Download the credentials JSON file.
+
+```bash
+npm install googleapis nodemailer ics
+```
+## Integration
+- [x]  Google Meet/Calender
+- []  Cal.com
+- []  Zoho Calender
+- []  Zoom Meetings
+
+
+### Calender UI
+https://shadcn-cal-com.vercel.app/?date=2025-03-02
+https://github.com/Mina-Massoud/next-ui-full-calendar
+https://github.com/schedule-x/schedule-x
+https://synergy-platform.vercel.app/calendar
+https://github.com/charlietlamb/calendar
+https://github.com/list-jonas/shadcn-ui-big-calendar
 

@@ -16,6 +16,8 @@
 		"dkim-signer": "^0.2.2",
 		"dotenv": "^16.4.7",
 		"glob": "^11.0.1",
+		"googleapis": "^146.0.0",
+		"ics": "^3.8.1",
 		"mailauth": "^4.8.2",
 		"mailparser": "^3.7.2",
 		"mime-types": "^2.1.35",
