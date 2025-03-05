@@ -98,17 +98,18 @@ export class DNSRecordGenerator {
 	 */
 	async generateSPF() {
 		let spfRecord = "v=spf1";
-
-		if (this.isIPAddress(this.mailServer)) {
-			spfRecord += ` a mx ip4:${this.mailServer}`;
+		if (this.isIPAddress(process.env.MAIL_SERVER_IP as string)) {
+			spfRecord += ` a mx ip4:${process.env.MAIL_SERVER_IP}`;
+		}else{
+			try {
+				await dns.lookup(this.mailServer).then(({ address }) => {
+					spfRecord += ` a mx ip4:${address}`;
+				});
+			} catch (error) {
+				spfRecord += ` include:${this.mailServer}`;
+			}
 		}
-		try {
-			await dns.lookup(this.mailServer).then(({ address }) => {
-				spfRecord += ` a mx ip4:${address}`;
-			});
-		} catch (error) {
-			spfRecord += ` include:${this.mailServer}`;
-		}
+	
 
 		spfRecord += " ~all";
 		return this.formatRecords("TXT", this.domain, spfRecord);
