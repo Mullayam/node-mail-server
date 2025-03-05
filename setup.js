@@ -38,7 +38,7 @@ function askQuestion(query) {
         console.log("Environment Configuration file created successfully.");
 
         console.log("Creating DNS Records for your Domain");
-        exec(`npm run build && DOMAIN_NAME=${MAIL_DOMAIN_NAME} && node ./build/start.js`, (error, stdout, stderr) => {
+        exec(`npm run build && DOMAIN_NAME=${MAIL_DOMAIN_NAME} node ./build/start.js`, (error, stdout, stderr) => {
             if (error) {
                 console.error(`Execution error: ${error.message}`);
                 return;
