@@ -1,5 +1,6 @@
 type ENV = {
-	MAIL_HOST: string;
+	INCOMING_MAIL_HOST: string;
+	OUTGOING_MAIL_HOST: string;
 	MAIL_SERVER_IP: string;
 	MAX_EMAILS_PER_MINUTE: string;
 	TLS_PRIVATE_KEY_PATH: string;

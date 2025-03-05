@@ -30,7 +30,7 @@ export class DNSRecordGenerator {
 
 	constructor(domain: string, dkimSelector: string = "default") {
 		this.domain = domain;
-		this.mailServer = process.env.MAIL_HOST;
+		this.mailServer = process.env.INCOMING_MAIL_HOST;
 		this.dkimSelector = dkimSelector;
 	}
 	private formatDkimPublicKey(publicKey: string): string {

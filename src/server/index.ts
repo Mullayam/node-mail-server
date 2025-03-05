@@ -15,10 +15,11 @@ import { OutgoingServerConfig } from "./OutgoingServer";
 
 export class SMTP_SERVICE {
 	private static _instance: SMTP_SERVICE | null = null;
-	private readonly MAIL_HOST = process.env.MAIL_HOST || "127.0.0.1";
+	private readonly INCOMING_MAIL_HOST = process.env.INCOMING_MAIL_HOST
+	private readonly OUTGOING_MAIL_HOST = process.env.OUTGOING_MAIL_HOST || process.env.INCOMING_MAIL_HOST
 	constructor() {
-		const incomingServer = new IncomingServerConfig(this.MAIL_HOST);
-		const outgoingServer = new OutgoingServerConfig(this.MAIL_HOST);
+		const incomingServer = new IncomingServerConfig(this.INCOMING_MAIL_HOST);
+		const outgoingServer = new OutgoingServerConfig(this.OUTGOING_MAIL_HOST);
 
 		incomingServer.start();
 		outgoingServer.start();
