@@ -94,8 +94,8 @@ export class OutgoingServerConfig {
 		this.eventListener(server);
 		server.listen(this.OUTGOING_SERVER_PORT);
 		Logging.dev(
-			white(
-				"Outgoing Mail Server started on port " + this.OUTGOING_SERVER_PORT,
+			white(				 
+				`Outgoing Mail Server started Host: ${this.host} Port: ` + this.OUTGOING_SERVER_PORT,
 			),
 		);
 		return server;

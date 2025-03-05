@@ -74,7 +74,7 @@ export class IncomingServerConfig {
 		server.listen(this.INCOMING_SERVER_PORT);
 		Logging.dev(
 			white(
-				"Incoming Mail Server started on port " + this.INCOMING_SERVER_PORT,
+				`Incoming Mail Server started Host: ${this.host} Port: ` + this.INCOMING_SERVER_PORT,
 			),
 		);
 		return server;
