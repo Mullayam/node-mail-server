@@ -5,6 +5,7 @@ import { Logging } from "./lib/logs";
 
 async function createRecords() {
 	Logging.dev("Creating DNS Records for your Domain", "notice");
+	 
 	const records = await new DNSRecordGenerator(
 		process.env.DOMAIN_NAME as string,
 	).generateAllRecords();
