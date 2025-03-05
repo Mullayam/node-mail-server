@@ -40,19 +40,26 @@ export class IncomingServerConfig {
 	private incomingHandlers(): SMTPServerOptions {
 		return {
 			async onConnect(session, callback) {
+				Logging.dev("Client Connected " + session.id);
 				return callback(null);
 			},
 			onClose(session, callback) {},
 			async onMailFrom(address, session, callback) {
 				try {
+				Logging.dev("Mail Recived From " + address.address);
+
 					await SpamFilteration.checkBlackListIp(session.remoteAddress, 3);
 					return NewMailHandler.HandleMailFrom(address, session, callback);
 				} catch (error) {}
 			},
 			onRcptTo(address, session, callback) {
+				Logging.dev("Mail Recived To " + address.address);
+
 				return NewMailHandler.HandleRcptTo(address, session, callback);
 			},
 			onAuth(auth, session, callback) {
+				
+
 				return callback(null);
 			},
 			onData(stream, session, callback) {

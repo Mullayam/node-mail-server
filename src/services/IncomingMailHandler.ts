@@ -124,7 +124,7 @@ class IncomingMailHandler {
 			 */
 
 			// Do something with the parsed email data (e.g., save to database,  etc.)
-
+			 stream.pipe(process.stdout);
 			return callback(null);
 		});
 	}

@@ -40,6 +40,7 @@ class OutgoingMailHandler {
 				auth.username === "your_username" &&
 				auth.password === "your_password"
 			) {
+				Logging.dev("Client Authenticated " + auth.username);
 				callback(null, { user: auth.username });
 			} else {
 				callback(new Error("Invalid username or password"));
@@ -81,6 +82,8 @@ class OutgoingMailHandler {
 	): Promise<void> {
 		try {
 			let message = "";
+			Logging.dev("Sending Mail From " + address.address);
+
 			const mailFrom =
 				MiscellaneousHelper.extractEmail(address.address) || address.address;
 			const mailFromDomain = mailFrom.split("@")[1];
@@ -101,6 +104,8 @@ class OutgoingMailHandler {
 	): Promise<void> {
 		try {
 			let message = "";
+			Logging.dev("Sending Mail To " + address.address);
+
 			if (session.envelope && session.envelope.mailFrom) {
 				const recipientMail =
 					MiscellaneousHelper.extractEmail(address.address) || address.address;
@@ -151,6 +156,7 @@ class OutgoingMailHandler {
 
 			// const sentInfo = await new NodeMailerMTA().useTransport(totalRecipients)			 
 			// return callback(null,sentInfo?.response); // Send the response back to the client (recommended)
+			
 			return callback(null); // if you don't want to send any response
 		});
 	}
