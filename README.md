@@ -195,16 +195,16 @@ npm install googleapis nodemailer ics
 ```
 ## Integration
 - [x]  Google Meet/Calender
-- []  Cal.com
-- []  Zoho Calender
-- []  Zoom Meetings
+- [ ]  Cal.com
+- [ ]  Zoho Calender
+- [ ]  Zoom Meetings
 
 
 ### Calender UI
-https://shadcn-cal-com.vercel.app/?date=2025-03-02
-https://github.com/Mina-Massoud/next-ui-full-calendar
-https://github.com/schedule-x/schedule-x
-https://synergy-platform.vercel.app/calendar
-https://github.com/charlietlamb/calendar
-https://github.com/list-jonas/shadcn-ui-big-calendar
+- https://shadcn-cal-com.vercel.app/?date=2025-03-02
+- https://github.com/Mina-Massoud/next-ui-full-calendar
+- https://github.com/schedule-x/schedule-x
+- https://synergy-platform.vercel.app/calendar
+- https://github.com/charlietlamb/calendar
+- https://github.com/list-jonas/shadcn-ui-big-calendar
 

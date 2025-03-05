@@ -101,7 +101,8 @@ export class NodeMailerMTA {
 						//     keySelector: "default",
 						//     privateKey: PVT_KEY
 						// }
-					});
+					}) 
+				return response
 				}
 
 				console.log(`Mail Successfully Delivered`);

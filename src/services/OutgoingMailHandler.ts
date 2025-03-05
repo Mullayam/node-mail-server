@@ -149,9 +149,9 @@ class OutgoingMailHandler {
 			// let totalRecipients = [...data.to, ...(data.cc || []), ...(data.bcc || [])];
 			// totalRecipients = Array.from(new Set(totalRecipients));
 
-			// await new NodeMailerMTA().useTransport(totalRecipients)
-
-			return callback();
+			// const sentInfo = await new NodeMailerMTA().useTransport(totalRecipients)			 
+			// return callback(null,sentInfo?.response); // Send the response back to the client (recommended)
+			return callback(null); // if you don't want to send any response
 		});
 	}
 
@@ -176,52 +176,5 @@ class OutgoingMailHandler {
 		return null; // No connection was successful
 	}
 
-	// for testing and knowledge purpose
-	private generateDKIMSignature() {
-		// This is for DEmo purpose if your are using (not recommended)Direct DNS based Delivery use it
-
-		// Receive all data through paramas and generate signature and send it for delivery
-		const emailBody = "Hello, this is a DKIM signed email.";
-		const signedHeadersList = [
-			"from",
-			"subject",
-			"date",
-			"message-id",
-			"content-type",
-			"content-transfer-encoding",
-			"mime-version",
-		];
-		const PVT_KEY =
-			"-----BEGIN PRIVATE KEY-----\nMIIEpAIBAAKCAQEA1mT5Oo5+DwTt0wV3KZ0K0V9G\n-----END PRIVATE KEY-----\n";
-		const headers = {
-			from: "your_mail_address@sender.com", // Replace with your mail address
-			to: "to_address@example.com", // Replace with the recipient's mail address
-			subject: "trtrtrtrt",
-			"message-id": "<276b2e73-63ec-a363-605d-3cc089bd0b52@sender.com>",
-			"content-transfer-encoding": "7bit",
-			date: "Sun, 09 Feb 2025 00:19:33 +0000",
-			"mime-version": "1.0",
-			"content-type": "text/plain; charset=utf-8",
-		};
-		// Method 1
-		const signature = spam.signDkim(
-			headers,
-			emailBody,
-			"example.com",
-			"sender.com",
-			PVT_KEY,
-		);
-		// Method 2 (Recommended)
-		const signature2 = DKIMSign(emailBody, {
-			// Your Domain , from which you are sending the mail
-			domainName: "sender.com",
-			// DKIM Selector , use default, if you change it then you need to change everytime while sending
-			keySelector: "default",
-			// Your private key , You can get it from Database or where you have stored it.
-			// Basically it is your private key while Generating DNS Records like DKIM, DMARC, SPF
-			// When u Generate DKIM Record, it will give you a private key, selector and public key
-			privateKey: PVT_KEY,
-		});
-	}
 }
 export const NewOutgoingMailHandler = new OutgoingMailHandler();
