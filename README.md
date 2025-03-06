@@ -154,19 +154,24 @@ Certificate: /etc/letsencrypt/live/mail.domain.com/fullchain.pem
 
 Private key: /etc/letsencrypt/live/mail.domain.com/privkey.pem
 
-Update Your .env
+ 
 
 ```
+# Dont Touch it
+INCOMING_MAIL_HOST=
 
-MAIL_HOST="mail.domain.com"
+# Dont Touch it
 
-MAIL_SERVER_IP="127.0.0.1"
+OUTGOING_MAIL_HOST=
+
+# Dont Touch it
+MAIL_SERVER_IP=
 
 MAX_EMAILS_PER_MINUTE=5
 
-TLS_PRIVATE_KEY_PATH="/etc/letsencrypt/live/mail.domain.com/privkey.pem"
+TLS_PRIVATE_KEY_PATH="/etc/letsencrypt/live/<OUTGOING_MAIL_HOST>/privkey.pem"
 
-TLS_CERTFICATE_PATH="/etc/letsencrypt/live/mail.domain.com/fullchain.pem"
+TLS_CERTFICATE_PATH="/etc/letsencrypt/live/<OUTGOING_MAIL_HOST>/fullchain.pem"
 
 ```
 ### Testing
