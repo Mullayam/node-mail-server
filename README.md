@@ -176,12 +176,6 @@ TLS_CERTFICATE_PATH="/etc/letsencrypt/live/<OUTGOING_MAIL_HOST>/fullchain.pem"
 ```
 ### Testing
 
-
-## License
-
-This project is licensed under the [MIT License](./LICENSE).
-
-
 - Run mail server tests:
 - Verify all DNS records
 - Test SMTP authentication
@@ -218,4 +212,10 @@ npm install googleapis nodemailer ics
 - https://synergy-platform.vercel.app/calendar
 - https://github.com/charlietlamb/calendar
 - https://github.com/list-jonas/shadcn-ui-big-calendar
+
+
+## License
+
+This project is licensed under the [MIT License](./LICENSE).
+
 
