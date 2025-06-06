@@ -176,6 +176,12 @@ TLS_CERTFICATE_PATH="/etc/letsencrypt/live/<OUTGOING_MAIL_HOST>/fullchain.pem"
 ```
 ### Testing
 
+
+## License
+
+This project is licensed under the [MIT License](./LICENSE).
+
+
 - Run mail server tests:
 - Verify all DNS records
 - Test SMTP authentication
