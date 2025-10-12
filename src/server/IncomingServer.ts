@@ -5,7 +5,7 @@ import { white } from "colorette";
 import { SpamFilteration } from "./config/SpamFilteration";
 
 export class IncomingServerConfig {
-	constructor(private host: string) {}
+	constructor(private host: string) { }
 	private INCOMING_SERVER_PORT = 25;
 	private getOptions(handlers: SMTPServerOptions): SMTPServerOptions {
 		return {
@@ -43,24 +43,37 @@ export class IncomingServerConfig {
 				Logging.dev("Client Connected " + session.id);
 				return callback(null);
 			},
-			onClose(session, callback) {},
+			onClose(session, callback) { },
 			async onMailFrom(address, session, callback) {
 				try {
-				Logging.dev("Mail Recived From " + address.address);
+					Logging.dev("Mail Recived From " + address.address);
 
 					await SpamFilteration.checkBlackListIp(session.remoteAddress, 3);
 					return NewMailHandler.HandleMailFrom(address, session, callback);
-				} catch (error) {}
+				} catch (error: any) {
+					return callback(new Error(error.message));
+				}
 			},
 			onRcptTo(address, session, callback) {
 				Logging.dev("Mail Recived To " + address.address);
 
 				return NewMailHandler.HandleRcptTo(address, session, callback);
 			},
-			onAuth(auth, session, callback) {
-				
+			async onAuth(auth, session, callback) {
+				try {
+					if (auth.method === "XOAUTH2" || auth.username || auth.accessToken || auth.password) {
+						await SpamFilteration.checkBlackListIp(
+							session.remoteAddress,
+							10,
+						);
+						throw new Error("Authentication not supported");
+					}
 
-				return callback(null);
+					return callback(null);
+				} catch (error: any) {
+					return callback(error.message);
+				}
+
 			},
 			onData(stream, session, callback) {
 				return NewMailHandler.HandleNewMail(stream, session, callback);

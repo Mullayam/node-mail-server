@@ -20,12 +20,14 @@ export class SpamFilteration {
 		// Check if the IP is temporarily blocked
 		if (tempBlockedIPs[ip] && tempBlockedIPs[ip] > now) {
 			// If the IP still sends messages while blocked, mark it as permanently blocked
+			const msg = `Remaining Count ${thresold - ipRequestCounts[ip]?.count||0} | Unblock time: ${Math.ceil((tempBlockedIPs[ip] - now) / 1000,)} seconds. Further abuse will lead to permanent blocking.`;
+
 
 			blockedIps.set(ip, now);
 			delete tempBlockedIPs[ip]; // Remove from temporary block list
 			delete ipRequestCounts[ip]; // Reset any stored request data
 			throw new Error(
-				"Your IP has been permanently blocked due to continued abuse.",
+				"Your IP has been permanently blocked due to continued abuse. " + msg,
 			);
 		} else if (tempBlockedIPs[ip]) {
 			// If the temporary block duration has passed, remove the IP from temp block list
