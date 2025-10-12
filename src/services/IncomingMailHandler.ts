@@ -7,8 +7,12 @@ import {
 	SMTPServerDataStream,
 	SMTPServerSession,
 } from "smtp-server";
+import { PGPService } from "./encryption/PGPService";
 
 const regex = /^[^\s@]+\.temp@[^\s@]+\.[^\s@]+$/;
+
+const pgp = new PGPService()
+
 class IncomingMailHandler {
 	async HandleMailFrom(
 		address: SMTPServerAddress,
@@ -112,20 +116,68 @@ class IncomingMailHandler {
 		let mailchunks = "";
 		stream.on("data", (chunk) => (mailchunks += chunk.toString()));
 		stream.on("end", async () => {
-			const parsedEmailData = await MailConfig.ParseEmail(mailchunks);
+			try {
+				const parsedEmailData = await MailConfig.ParseEmail(mailchunks);
 
-			/** NOTE :
-			 * CHECK FOR TXT RECORD i.e DKIM
-			 *  Check for DKIM signature
-			 *  Extract DKIM-Signature Header from the Email.
-			 *  new SpamFilteration().verifyDkimSignature(parsedEmailData.headerLines, parsedEmailData.dkimSignature);
-			 *  Map HeaderLines according to requirement of function
-			 *  Verify the DKIM signature and reject the email if not valid, forward to spam folder
-			 */
+				/** NOTE :
+				 * CHECK FOR TXT RECORD i.e DKIM
+				 *  Check for DKIM signature
+				 *  Extract DKIM-Signature Header from the Email.
+				 *  new SpamFilteration().verifyDkimSignature(parsedEmailData.headerLines, parsedEmailData.dkimSignature);
+				 *  Map HeaderLines according to requirement of function
+				 *  Verify the DKIM signature and reject the email if not valid, forward to spam folder
+				 */
+				
+				// Do something with the parsed email data (e.g., save to database,  etc.)
+				// Spam Filtering
+				// Forwarding to Other Mail Servers
+				// Auto-Responders
+				// Webhooks
+				// Real-time Notifications
+				// Integration with Other Services
+				// Archiving
+				// Backup
+				// Email Parsing and Extraction
+				// Custom Business Logic
+				// Email Categorization and Tagging
+				// User Preferences and Settings
+				// Throttling and Rate Limiting
+				// Security Measures (e.g., Virus Scanning, Malware Detection)
+				// Compliance (e.g., GDPR, HIPAA)
+				// Multi-Tenancy Support
+				// API Integration for Developers
+				// UI for Managing Emails and Settings
+				// Reporting and Analytics
+				// Scheduling (e.g., Delayed Delivery)
+				// Load Balancing and Scalability
+				// Storing in Database
+				// Storing Attachments in Cloud Storage or Local Storage
+				// Notifications
+				// Logging
+				// Monitoring
+				// Alerting
+				// Testing and Debugging Tools
+				// Documentation for Users and Developers
+				// Custom Headers
+				   // check forwariding and forward to
+              
+				await pgp.encryptMessage(mailchunks, {
+					privateKey: process.env.PGP_PRIVATE_KEY || "",
+					publicKey: process.env.PGP_PUBLIC_KEY || "",
+					revocationCertificate: process.env.PGP_REVOCATION_CERTIFICATE || ""
 
-			// Do something with the parsed email data (e.g., save to database,  etc.)
-			 stream.pipe(process.stdout);
-			return callback(null);
+				}, "password").then(async (encrypted) => {
+					// Send the encrypted message via email or store it as needed
+					console.log("Encrypted Message: ", encrypted);
+
+				})
+
+
+				stream.pipe(process.stdout);
+				return callback(null);
+			} catch (error: any) {
+				return callback(new Error(error.message));
+			}
 		});
 	}
 }
