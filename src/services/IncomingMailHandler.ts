@@ -8,6 +8,8 @@ import {
 	SMTPServerSession,
 } from "smtp-server";
 import { PGPService } from "./encryption/PGPService";
+import { RFC5322MailComposer } from "./config/mail.composer";
+import { MailAuth } from "./config/mailauth";
 
 const regex = /^[^\s@]+\.temp@[^\s@]+\.[^\s@]+$/;
 
@@ -127,7 +129,7 @@ class IncomingMailHandler {
 				 *  Map HeaderLines according to requirement of function
 				 *  Verify the DKIM signature and reject the email if not valid, forward to spam folder
 				 */
-				
+
 				// Do something with the parsed email data (e.g., save to database,  etc.)
 				// Spam Filtering
 				// Forwarding to Other Mail Servers
@@ -159,8 +161,52 @@ class IncomingMailHandler {
 				// Testing and Debugging Tools
 				// Documentation for Users and Developers
 				// Custom Headers
-				   // check forwariding and forward to
-              
+				const newHeaders = RFC5322MailComposer.createRfc822Headers({
+
+					"X-AE-Receipt-Time": `${Date.now()}`,
+					"X-AE-Origin": "api",
+					"X-AE-Send-Type": "transactional",
+					"X-AE-Platform": "ae-mailer-v1",
+					"X-AE-Mailer": "Enjoys-Mail-Service-EMS",
+					"X-AE-Message-Channel": "email",
+					"X-AE-Abuse-Report": "abuse@yourdomain",
+					"X-AE-Region": "ap-south-1",
+					"X-Mailer": "Airsend - Powered By Enjoys",
+				});
+				// mailchunks = newHeaders + mailchunks; // attach headers
+				// check forwariding and forward to
+				const mailAuth = new MailAuth(mailchunks, "sender@domain.com", "domain.com");
+				// Handle DKIM, SPF, DMARC, ARC and other authentication mechanisms
+				// reject, quarantine, deliver to inbox, deliver to spam based on the results
+				const { results } = await mailAuth.dkimCheck();
+				const spf = await mailAuth.getSpfCheckAll();
+				const dmarc = await mailAuth.getDmarcRecord();
+
+				// If forwarding the mail to other mail server check the authentication results and then forward to other mail server
+				const result = await mailAuth.sealMessage(true, {
+					headers: {
+						// "Return-Path": returnPath as string,
+						// "Delivered-To": recipeintAddress,
+						// 	"X-Received:":
+						// 		"by " +
+						// 		session.localPort +
+						// 		" via " +
+						// 		session.remoteAddress +
+						// 		" (" +
+						// 		session.remoteAddress +
+						// 		") with SMTP id " +
+						// 		session.id +
+						// 		" for " +
+						// 		recipeintAddress +
+						// 		new Date().toUTCString(),
+					},
+				});
+				let headers: string | null = null;
+				if (result) {
+					headers = result.headers;
+				}
+				const rawEmail = (mailchunks = headers ? headers + "\r\n" + mailchunks : mailchunks);
+				// Save the RAW email OR modified email with custom headers to database 
 				await pgp.encryptMessage(mailchunks, {
 					privateKey: process.env.PGP_PRIVATE_KEY || "",
 					publicKey: process.env.PGP_PUBLIC_KEY || "",

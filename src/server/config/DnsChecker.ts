@@ -1,3 +1,4 @@
+import { MxRecord } from "dns";
 import { DNSRecordType, DNSResponse } from "../../interfaces/dns.interface";
 import dns from "dns/promises";
 import moment from "moment";
@@ -14,16 +15,30 @@ export class DNSChecker {
 		this.domain = domain;
 		this.dkimSelector = dkimSelector;
 	}
-	static async getMXRecords(domain: string) {
-		try {
-			const records = await dns.resolveMx(domain);
-			records.sort((a, b) => a.priority - b.priority); // Sort by priority
-			return records[0].exchange; // Return primary mail server
-		} catch (error) {
-			console.error(`❌ Failed to fetch MX records for ${domain}:`, error);
-			return null;
-		}
-	}
+	/**
+   * Resolves the DNS records for a given hostname using DNS over HTTPS.
+   * @param hostname - The hostname to resolve.
+   * @returns A promise that resolves to an array of IP addresses as strings.
+   */
+  static async resolveIP(hostname: string): Promise<string[]> {
+    try {
+
+      return dns.resolve4(hostname);
+    } catch (error) {
+      console.error(`❌ Failed to fetch IP addresses for ${hostname}:`, error);
+      return [];
+    }
+  }
+	 static async getMXRecords(domain: string): Promise<{ exchange: string, records: MxRecord[] } | null> {
+    try {
+      const records = await dns.resolveMx(domain);
+      records.sort((a, b) => a.priority - b.priority); // Sort by priority
+      return { exchange: records[0].exchange, records }; // Return primary mail server
+    } catch (error) {
+      console.error(`❌ Failed to fetch MX records for ${domain}:`, error);
+      return null;
+    }
+  }
 
 	/**
 	 * Resolves the DNS records for a given hostname using DNS over HTTPS.
