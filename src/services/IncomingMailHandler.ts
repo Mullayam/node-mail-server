@@ -7,9 +7,9 @@ import {
 	SMTPServerDataStream,
 	SMTPServerSession,
 } from "smtp-server";
-import { PGPService } from "./encryption/PGPService";
-import { RFC5322MailComposer } from "./config/mail.composer";
-import { MailAuth } from "./config/mailauth";
+import { PGPService } from "../server/config/encryption/PGPService";
+import { RFC5322MailComposer } from "../server/config/mail.composer";
+import { MailAuth } from "../server/config/mailauth";
 
 const regex = /^[^\s@]+\.temp@[^\s@]+\.[^\s@]+$/;
 
