@@ -1,0 +1,17 @@
+{
+  "name": "demo",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@types/crypto-js": "^4.2.2",
+    "@types/node-imap": "^0.9.3",
+    "crypto-js": "^4.2.0",
+    "node-imap": "^0.9.6"
+  }
+}

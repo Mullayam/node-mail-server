@@ -1,6 +1,6 @@
 # This Project is Under Develepment
 
-## [IMAP](https://github.com/enjoys-in/airsend-imap)
+## [IMAP](./imap/readme.md)
 
 [Setup Video](https://media.cm/u/H5U7)
 
