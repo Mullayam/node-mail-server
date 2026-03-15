@@ -82,7 +82,8 @@ class IncomingMailHandler {
 				message = `SPF record passed ,localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${mailFrom} to ${receiverMail}`;
 
 				if (dmarcRecords.length === 0) {
-					const message = `No DMARC record found for domain ${mailFromDomain}.DMARC record not passed, Forwarding to Spam Folder`;
+					message = `No DMARC record found for domain ${mailFromDomain}. DMARC record not passed, Forwarding to Spam Folder`;
+					// TODO: Flag this email for spam folder delivery
 				} else {
 					message = `DMARC record passed, localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${mailFrom} to ${receiverMail}, `;
 				}
@@ -90,12 +91,14 @@ class IncomingMailHandler {
 				// Check for TXT record
 
 				if (txtRecords.length === 0) {
-					const message = `No TXT records found for domain ${mailFromDomain}. Forwarding to Spam Folder`;
+					message = `No TXT records found for domain ${mailFromDomain}. Forwarding to Spam Folder`;
+					// TODO: Flag this email for spam folder delivery
 				} else {
 					message = `TXT record passed, localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${mailFrom} to ${receiverMail}`;
 				}
 
-				const successMessage = `Incoming mail accepted  localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort},  from = ${mailFrom} to ${receiverMail}`;
+				message = `Incoming mail accepted  localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort},  from = ${mailFrom} to ${receiverMail}`;
+				console.log(message);
 
 				// Dont Forget to check the RCPT TO domain is exist or not in your System
 
@@ -162,7 +165,6 @@ class IncomingMailHandler {
 				// Documentation for Users and Developers
 				// Custom Headers
 				const newHeaders = RFC5322MailComposer.createRfc822Headers({
-
 					"X-AE-Receipt-Time": `${Date.now()}`,
 					"X-AE-Origin": "api",
 					"X-AE-Send-Type": "transactional",
@@ -173,14 +175,34 @@ class IncomingMailHandler {
 					"X-AE-Region": "ap-south-1",
 					"X-Mailer": "Airsend - Powered By Enjoys",
 				});
-				// mailchunks = newHeaders + mailchunks; // attach headers
-				// check forwariding and forward to
-				const mailAuth = new MailAuth(mailchunks, "sender@domain.com", "domain.com");
+				mailchunks = newHeaders + mailchunks; // attach custom headers
+
+				// Extract sender info from parsed email for authentication
+				const senderAddress = parsedEmailData.from?.value?.[0]?.address || (session.envelope?.mailFrom && session.envelope.mailFrom.address) || "";
+				const senderDomain = senderAddress.split("@")[1] || "";
+				const mailAuth = new MailAuth(mailchunks, senderAddress, senderDomain);
 				// Handle DKIM, SPF, DMARC, ARC and other authentication mechanisms
 				// reject, quarantine, deliver to inbox, deliver to spam based on the results
 				const { results } = await mailAuth.dkimCheck();
 				const spf = await mailAuth.getSpfCheckAll();
 				const dmarc = await mailAuth.getDmarcRecord();
+
+				// Evaluate DKIM result
+				const dkimPass = results?.some((r) => r.status?.result === "pass");
+				if (!dkimPass) {
+					console.warn(`DKIM check failed for ${senderAddress}`);
+				}
+
+				// Evaluate SPF result
+				const spfPass = spf?.some((r) => r.info?.toLowerCase().includes("pass"));
+				if (!spfPass) {
+					console.warn(`SPF check failed for ${senderAddress}`);
+				}
+
+				// Evaluate DMARC policy
+				if (dmarc?.p === "reject" && (!dkimPass || !spfPass)) {
+					return callback(new Error(`Email rejected: DMARC policy is 'reject' and authentication failed for ${senderDomain}`));
+				}
 
 				// If forwarding the mail to other mail server check the authentication results and then forward to other mail server
 				const result = await mailAuth.sealMessage(true, {
@@ -205,21 +227,17 @@ class IncomingMailHandler {
 				if (result) {
 					headers = result.headers;
 				}
-				const rawEmail = (mailchunks = headers ? headers + "\r\n" + mailchunks : mailchunks);
+				const rawEmail = headers ? headers + "\r\n" + mailchunks : mailchunks;
 				// Save the RAW email OR modified email with custom headers to database 
-				await pgp.encryptMessage(mailchunks, {
+				const pgpPassphrase = process.env.PGP_PASSPHRASE || "";
+				const encrypted = await pgp.encryptMessage(rawEmail, {
 					privateKey: process.env.PGP_PRIVATE_KEY || "",
 					publicKey: process.env.PGP_PUBLIC_KEY || "",
 					revocationCertificate: process.env.PGP_REVOCATION_CERTIFICATE || ""
+				}, pgpPassphrase);
+				// Store the encrypted message in database or forward as needed
+				console.log("Encrypted Message: ", encrypted);
 
-				}, "password").then(async (encrypted) => {
-					// Send the encrypted message via email or store it as needed
-					console.log("Encrypted Message: ", encrypted);
-
-				})
-
-
-				stream.pipe(process.stdout);
 				return callback(null);
 			} catch (error: any) {
 				return callback(new Error(error.message));
