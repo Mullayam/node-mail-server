@@ -116,14 +116,77 @@ class IncomingMailHandler {
 	async HandleNewMail(
 		stream: SMTPServerDataStream,
 		session: SMTPServerSession,
-		callback: (err?: Error | null | undefined) => void,
+		callback: (err?: Error | null | undefined, message?: string) => void,
 	): Promise<void> {
 		let mailchunks = "";
 		stream.on("data", (chunk) => (mailchunks += chunk.toString()));
+		stream.on("error", (err) => callback(new Error(err.message)));
 		stream.on("end", async () => {
 			try {
 				const parsedEmailData = await MailConfig.ParseEmail(mailchunks);
 
+				// Extract sender info from parsed email for authentication
+				const senderAddress = parsedEmailData.from?.value?.[0]?.address || (session.envelope?.mailFrom && session.envelope.mailFrom.address) || "";
+				const senderDomain = senderAddress.split("@")[1] || "";
+
+				// Run DKIM, SPF, DMARC checks in parallel on the ORIGINAL message (before header modification)
+				const mailAuth = new MailAuth(mailchunks, senderAddress, senderDomain);
+				const [dkimResult, spf, dmarc] = await Promise.all([
+					mailAuth.dkimCheck(),
+					mailAuth.getSpfCheckAll(),
+					mailAuth.getDmarcRecord(),
+				]);
+
+				// Evaluate DKIM result
+				const dkimPass = dkimResult.results?.some((r) => r.status?.result === "pass");
+				if (!dkimPass) {
+					console.warn(`DKIM check failed for ${senderAddress}`);
+				}
+
+				// Evaluate SPF result
+				const spfPass = spf?.some((r) => r.info?.toLowerCase().includes("pass"));
+				if (!spfPass) {
+					console.warn(`SPF check failed for ${senderAddress}`);
+				}
+
+				// Evaluate DMARC policy
+				if (dmarc?.p === "reject" && (!dkimPass || !spfPass)) {
+					return callback(new Error(`Email rejected: DMARC policy is 'reject' and authentication failed for ${senderDomain}`));
+				}
+
+				// Now attach custom headers AFTER authentication (so DKIM verification isn't broken)
+				const newHeaders = RFC5322MailComposer.createRfc822Headers({
+					"X-AE-Receipt-Time": `${Date.now()}`,
+					"X-AE-Origin": "api",
+					"X-AE-Send-Type": "transactional",
+					"X-AE-Platform": "ae-mailer-v1",
+					"X-AE-Mailer": "Enjoys-Mail-Service-EMS",
+					"X-AE-Message-Channel": "email",
+					"X-AE-Abuse-Report": "abuse@yourdomain",
+					"X-AE-Region": "ap-south-1",
+					"X-Mailer": "Airsend - Powered By Enjoys",
+				});
+				mailchunks = newHeaders + mailchunks;
+
+				// If forwarding, seal the message with ARC headers
+				const result = await mailAuth.sealMessage(true, {
+					headers: {},
+				});
+				let sealedHeaders: string | null = null;
+				if (result) {
+					sealedHeaders = result.headers;
+				}
+				const rawEmail = sealedHeaders ? sealedHeaders + "\r\n" + mailchunks : mailchunks;
+
+				// Encrypt and store
+				const pgpPassphrase = process.env.PGP_PASSPHRASE || "";
+				const encrypted = await pgp.encryptMessage(rawEmail, {
+					privateKey: process.env.PGP_PRIVATE_KEY || "",
+					publicKey: process.env.PGP_PUBLIC_KEY || "",
+					revocationCertificate: process.env.PGP_REVOCATION_CERTIFICATE || ""
+				}, pgpPassphrase);
+				// Store the encrypted message in database or forward as needed
+				console.log("Encrypted Message: ", encrypted);
 				/** NOTE :
 				 * CHECK FOR TXT RECORD i.e DKIM
 				 *  Check for DKIM signature
@@ -164,81 +227,8 @@ class IncomingMailHandler {
 				// Testing and Debugging Tools
 				// Documentation for Users and Developers
 				// Custom Headers
-				const newHeaders = RFC5322MailComposer.createRfc822Headers({
-					"X-AE-Receipt-Time": `${Date.now()}`,
-					"X-AE-Origin": "api",
-					"X-AE-Send-Type": "transactional",
-					"X-AE-Platform": "ae-mailer-v1",
-					"X-AE-Mailer": "Enjoys-Mail-Service-EMS",
-					"X-AE-Message-Channel": "email",
-					"X-AE-Abuse-Report": "abuse@yourdomain",
-					"X-AE-Region": "ap-south-1",
-					"X-Mailer": "Airsend - Powered By Enjoys",
-				});
-				mailchunks = newHeaders + mailchunks; // attach custom headers
-
-				// Extract sender info from parsed email for authentication
-				const senderAddress = parsedEmailData.from?.value?.[0]?.address || (session.envelope?.mailFrom && session.envelope.mailFrom.address) || "";
-				const senderDomain = senderAddress.split("@")[1] || "";
-				const mailAuth = new MailAuth(mailchunks, senderAddress, senderDomain);
-				// Handle DKIM, SPF, DMARC, ARC and other authentication mechanisms
-				// reject, quarantine, deliver to inbox, deliver to spam based on the results
-				const { results } = await mailAuth.dkimCheck();
-				const spf = await mailAuth.getSpfCheckAll();
-				const dmarc = await mailAuth.getDmarcRecord();
-
-				// Evaluate DKIM result
-				const dkimPass = results?.some((r) => r.status?.result === "pass");
-				if (!dkimPass) {
-					console.warn(`DKIM check failed for ${senderAddress}`);
-				}
-
-				// Evaluate SPF result
-				const spfPass = spf?.some((r) => r.info?.toLowerCase().includes("pass"));
-				if (!spfPass) {
-					console.warn(`SPF check failed for ${senderAddress}`);
-				}
-
-				// Evaluate DMARC policy
-				if (dmarc?.p === "reject" && (!dkimPass || !spfPass)) {
-					return callback(new Error(`Email rejected: DMARC policy is 'reject' and authentication failed for ${senderDomain}`));
-				}
-
-				// If forwarding the mail to other mail server check the authentication results and then forward to other mail server
-				const result = await mailAuth.sealMessage(true, {
-					headers: {
-						// "Return-Path": returnPath as string,
-						// "Delivered-To": recipeintAddress,
-						// 	"X-Received:":
-						// 		"by " +
-						// 		session.localPort +
-						// 		" via " +
-						// 		session.remoteAddress +
-						// 		" (" +
-						// 		session.remoteAddress +
-						// 		") with SMTP id " +
-						// 		session.id +
-						// 		" for " +
-						// 		recipeintAddress +
-						// 		new Date().toUTCString(),
-					},
-				});
-				let headers: string | null = null;
-				if (result) {
-					headers = result.headers;
-				}
-				const rawEmail = headers ? headers + "\r\n" + mailchunks : mailchunks;
-				// Save the RAW email OR modified email with custom headers to database 
-				const pgpPassphrase = process.env.PGP_PASSPHRASE || "";
-				const encrypted = await pgp.encryptMessage(rawEmail, {
-					privateKey: process.env.PGP_PRIVATE_KEY || "",
-					publicKey: process.env.PGP_PUBLIC_KEY || "",
-					revocationCertificate: process.env.PGP_REVOCATION_CERTIFICATE || ""
-				}, pgpPassphrase);
-				// Store the encrypted message in database or forward as needed
-				console.log("Encrypted Message: ", encrypted);
-
-				return callback(null);
+				 
+				return callback(null, "250 Message accepted");
 			} catch (error: any) {
 				return callback(new Error(error.message));
 			}
