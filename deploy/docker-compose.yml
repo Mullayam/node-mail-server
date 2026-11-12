@@ -1,7 +1,7 @@
 # Whole mail stack. Run from the repo root:
 #
 #   docker compose -f deploy/docker-compose.yml up -d                  # inbound + outbound + relay + redis
-#   docker compose -f deploy/docker-compose.yml --profile imap up -d   # also imap (WIP, doesn't build yet)
+#   docker compose -f deploy/docker-compose.yml --profile imap up -d   # also imap (prototype)
 #
 # Port ownership: inbound (Node) publishes 25, outbound (KumoMTA) publishes 587,
 # relay (KumoMTA) publishes 2587.
@@ -53,22 +53,23 @@ services:
       - redis
     restart: unless-stopped
 
-  # Mailbox access (Go + Gluon) on :143. Opt-in until it builds.
+  # Mailbox access (Go + Gluon). Opt-in. Mail is stored in Pebble under /data/mail.
+  # Config: server/imap/conf/imap.xml and users.xml (copy from the *.example.xml files).
+  # TLS: put fullchain.pem and privkey.pem in server/imap/tls and enable <tls> in imap.xml.
+  # After editing config or renewing certs: docker compose -f deploy/docker-compose.yml exec imap imapctl reload
   imap:
     profiles: ["imap"]
     build: ../server/imap
-    environment:
-      GLUON_HOST: 0.0.0.0:143
-      GLUON_DIR: /data
     ports:
-      - "143:143"
+      - "127.0.0.1:143:143" # plain IMAP (STARTTLS when <tls> is set): local only
+      - "993:993" # IMAPS: only answers when <tls> is set in imap.xml
     volumes:
+      - ../server/imap/conf:/etc/imap:ro
+      - ../server/imap/tls:/etc/ssl/imap:ro
       - imap-data:/data
-    depends_on:
-      - redis
     restart: unless-stopped
 
-  # Shared by outbound and relay (DKIM_BACKEND=redis) and imap. Not published.
+  # Shared by outbound and relay (DKIM_BACKEND=redis). Not published.
   redis:
     image: redis:7-alpine
     volumes:
