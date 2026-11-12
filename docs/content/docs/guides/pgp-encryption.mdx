@@ -1,0 +1,59 @@
+---
+title: PGP encryption
+description: Encrypt incoming mail at rest with OpenPGP, and generate and protect the keys.
+---
+
+When PGP keys are configured, the receiving server encrypts every incoming message before storage, so a copy of the mail store alone cannot be read.
+
+## Settings
+
+```env
+PGP_PRIVATE_KEY="-----BEGIN PGP PRIVATE KEY BLOCK-----\n..."
+PGP_PUBLIC_KEY="-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
+PGP_REVOCATION_CERTIFICATE="-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
+PGP_PASSPHRASE="your_secure_passphrase"
+```
+
+| Variable | Purpose |
+|----------|---------|
+| `PGP_PRIVATE_KEY` | The armored private key. It is itself protected by the passphrase. |
+| `PGP_PUBLIC_KEY` | The armored public key used to encrypt. |
+| `PGP_REVOCATION_CERTIFICATE` | Used to revoke the key if it is ever lost or exposed. Keep a copy somewhere safe. |
+| `PGP_PASSPHRASE` | Unlocks the private key. |
+
+Keep the passphrase out of version control. `.env` is already in `.gitignore`.
+
+## PGPService
+
+`PGPService` (in `server/src/server/config/encryption/`) is a small facade over OpenPGP.js.
+
+| Method | What it does |
+|--------|--------------|
+| `generateKeyPair(userIDs, password)` | Creates a 4096-bit RSA key pair, protected by `password`. Returns `publicKey`, `privateKey` and `revocationCertificate`. |
+| `encryptMessage(plaintext, keyPair, password)` | Encrypts a message with the public key. |
+| `decryptMessage(encrypted, keyPair, password)` | Decrypts a message with the private key. |
+
+## Wrapping a private key
+
+`PGPFactory` can also protect a private key for storage, for example per user in a database:
+
+- `generateAndWrapKey(privateKeyArmored, passphrase)` derives a 256-bit key from the passphrase with Argon2id, and encrypts the private key with AES-256-GCM. It returns the wrapped key (as base64) and the salt to save with it.
+- `unwrapPrivateKey(wrappedBase64, passphrase, saltBase64)` reverses it.
+
+## Generate a key pair
+
+```ts
+import { PGPService } from "./server/config/encryption/PGPService";
+
+const pgp = new PGPService();
+const keys = await pgp.generateKeyPair(
+  [{ email: "postmaster@example.com" }],
+  "your_secure_passphrase",
+);
+
+console.log(keys.publicKey);
+console.log(keys.privateKey);
+console.log(keys.revocationCertificate);
+```
+
+Copy the three values into the `PGP_*` variables, with each line break written as `\n`.
