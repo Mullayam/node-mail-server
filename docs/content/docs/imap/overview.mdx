@@ -1,0 +1,61 @@
+---
+title: IMAP overview
+description: Mailbox access with ProtonMail's Gluon library. Work in progress.
+---
+
+IMAP lets mail clients such as Thunderbird, Outlook and mobile apps read the mail your server receives. This part of the project is under development.
+
+<Callout title="Work in progress" type="warn">
+  The IMAP server does not build yet. `server/imap/go.mod` lists no requirements, and the import paths in `main.go` do not match the folders. Treat this page as the design.
+</Callout>
+
+## Why Gluon
+
+[Gluon](https://github.com/ProtonMail/gluon) is Proton's IMAP server library, written in Go. It is a library, not a ready-made server: you embed it in a Go program and give it a connector that reads and writes mail from your own storage. Gluon handles the IMAP protocol itself, such as sessions, mailboxes, UIDs, flags and IDLE.
+
+It is used instead of Dovecot because:
+
+- It is a single Go binary, with no system users, Maildir folders or file permissions to manage.
+- Mail stays in your own database and pipeline, including the PGP-encrypted store.
+- Users, authentication and mailboxes are controlled from code, not from Dovecot config files.
+
+Dovecot is not used. The notes in `server/imap/dovecot.md` are kept for reference only.
+
+## How it fits
+
+```text
+Sender ──▶ SMTP :25 (Node, IncomingMailHandler) ──▶ database / mail store
+                                                          ▲
+Mail client ◀──▶ IMAP :143 (Go, Gluon) ◀── connector (core/connector/db.go)
+```
+
+The SMTP server stores incoming mail. The Gluon connector reads that store and pushes new messages to Gluon, so they appear in the user's mail client.
+
+## Folder layout
+
+| File | Purpose |
+|------|---------|
+| `server/imap/main.go` | Starts the Gluon server, reads the environment and listens for IMAP connections. |
+| `server/imap/core/factory.go` | Loads the users and registers each one with Gluon. |
+| `server/imap/core/connector/db.go` | The Gluon connector, backed by the SQL database. |
+| `server/imap/core/consts/init.go` | Default values. |
+
+## Configuration
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GLUON_DIR` | none | Folder for Gluon's local data and database cache. |
+| `GLUON_HOST` | `localhost:143` | Address and port to listen on. |
+| `GLUON_LOG_LEVEL` | unset | Log level, for example `debug`. |
+
+`main.go` also accepts the flags `-profile-cpu`, `-profile-mem`, `-profile-lock` and `-profile-path` for profiling.
+
+## Running it
+
+In Docker, IMAP is behind a profile so the rest of the stack is not affected:
+
+```bash
+docker compose -f deploy/docker-compose.yml --profile imap up -d
+```
+
+See [Docker Compose](/docs/deployment/docker-compose).
