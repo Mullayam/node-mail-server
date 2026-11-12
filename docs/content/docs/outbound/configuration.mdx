@@ -48,7 +48,7 @@ Replace the domains in both with your own.
 
 ## DKIM keys
 
-`dkim.lua` is written to take the private key from one of three places, chosen by `DKIM_BACKEND`:
+`dkim.lua` takes the private key from one of three places, chosen by `DKIM_BACKEND`:
 
 | Backend | Where the key comes from |
 |---------|--------------------------|
@@ -56,10 +56,10 @@ Replace the domains in both with your own.
 | `http` | `GET $DKIM_HTTP_URL?domain=<d>&selector=<s>` with the header `X-API-Key: $DKIM_API_KEY`. |
 | `redis` | The key `<domain>::pvt::key` in the Redis server at `REDIS_HOST`. |
 
-The domain is read from the message's `From` header, and the selector is `DKIM_SELECTOR`.
+The domain is read from the message's `From` header, and the selector is `DKIM_SELECTOR`. A key is looked up once and then reused for 5 minutes, so a new key takes up to 5 minutes to be used. If no key is found, the message is sent unsigned and a warning is logged.
 
-<Callout title="DKIM signing does not work yet" type="error">
-  The signing code uses functions that KumoMTA does not have. See [Known issues](/docs/outbound/known-issues) for the fix.
+<Callout title="DKIM only runs with USE_RELAY=true">
+  With `USE_RELAY=false`, `dkim.lua` is not loaded and mail leaves unsigned. Set `USE_RELAY=true` to sign, and list your sender domains in `domains.lua`.
 </Callout>
 
 ## Sending IPs

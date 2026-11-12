@@ -6,7 +6,7 @@ description: Use KumoMTA as the sending engine, with SMTP authentication, queues
 [KumoMTA](https://docs.kumomta.com/) is a high-volume mail transfer agent. The `outbound/` folder holds its policy: Lua and TOML files that tell it how to accept, queue and deliver your mail.
 
 <Callout title="Read the known issues first" type="warn">
-  The policy has not been run end to end yet, and some parts do not match KumoMTA's API. See [Known issues](/docs/outbound/known-issues) before you rely on DKIM signing or `USE_RELAY=true`.
+  DKIM signing and `USE_RELAY=true` work and were tested with KumoMTA 2026.09.29. Traffic shaping is not loaded yet. See [Known issues](/docs/outbound/known-issues).
 </Callout>
 
 ## What it does
