@@ -1,0 +1,236 @@
+# Custom Traffic Shaping for Unosend
+# /opt/kumomta/etc/policy/shaping.toml
+# NOT LOADED YET: nothing in init.lua wires this up via get_egress_path_config.
+# Until it is, only the per-domain rate in queue.lua applies.
+# Updated 2026-02-11: Improved ISP-specific rules
+
+# ============================================
+# GMAIL / GOOGLE - Conservative for warmup
+# ============================================
+[provider."google"]
+match = [{ MXSuffix = ".google.com" }, { MXSuffix = ".googlemail.com" }]
+connection_limit = 8
+max_connection_rate = "10/min"
+max_message_rate = "120/min"
+max_deliveries_per_connection = 50
+enable_tls = "Required"
+enable_mta_sts = true
+idle_timeout = "30s"
+
+[[provider."google".automation]]
+regex = [
+    '''4\.\d\.\d .* try again later''',
+    '''421.*too many connections''',
+    '''Our system has detected an unusual rate''',
+]
+action = [
+    { SetConfig = { name = "max_message_rate", value = "30/min" } },
+    { SetConfig = { name = "connection_limit", value = 2 } },
+]
+duration = "2h"
+
+# ============================================
+# MICROSOFT - Outlook, Hotmail, Live
+# ============================================
+[provider."microsoft"]
+match = [
+    { MXSuffix = ".outlook.com" },
+    { MXSuffix = ".hotmail.com" },
+    { MXSuffix = ".protection.outlook.com" },
+]
+connection_limit = 6
+max_connection_rate = "8/min"
+max_message_rate = "80/min"
+max_deliveries_per_connection = 50
+enable_tls = "Required"
+enable_mta_sts = true
+enable_dane = true
+
+[[provider."microsoft".automation]]
+regex = [
+    '''421 RP-00\d''',
+    '''Service not available''',
+    '''temporarily deferred''',
+]
+action = [
+    { SetConfig = { name = "max_message_rate", value = "20/min" } },
+    { SetConfig = { name = "connection_limit", value = 2 } },
+]
+duration = "4h"
+
+# ============================================
+# COMCAST - Large US ISP
+# ============================================
+[provider."comcast"]
+match = [{ MXSuffix = ".comcast.net" }]
+connection_limit = 3
+max_connection_rate = "3/min"
+max_message_rate = "20/min"
+max_deliveries_per_connection = 20
+enable_tls = "Opportunistic"
+
+[[provider."comcast".automation]]
+regex = ['''421.*too many''', '''RL0\d{3}''']
+action = [
+    { SetConfig = { name = "max_message_rate", value = "5/min" } },
+    { SetConfig = { name = "connection_limit", value = 1 } },
+]
+duration = "4h"
+
+# ============================================
+# ATT - AT&T
+# ============================================
+[provider."att"]
+match = [
+    { MXSuffix = ".att.net" },
+    { MXSuffix = ".prodigy.net" },
+    { MXSuffix = ".sbcglobal.net" },
+]
+connection_limit = 3
+max_connection_rate = "3/min"
+max_message_rate = "20/min"
+max_deliveries_per_connection = 20
+enable_tls = "Opportunistic"
+
+[[provider."att".automation]]
+regex = ['''421.*service unavailable''', '''rate limit''']
+action = [
+    { SetConfig = { name = "max_message_rate", value = "5/min" } },
+    { SetConfig = { name = "connection_limit", value = 1 } },
+]
+duration = "4h"
+
+# ============================================
+# YAHOO / AOL - Very strict
+# ============================================
+[provider."yahoo"]
+match = [{ MXSuffix = ".yahoodns.net" }, { MXSuffix = ".mail.yahoo.com" }]
+connection_limit = 3
+max_connection_rate = "5/min"
+max_message_rate = "30/min"
+max_deliveries_per_connection = 20
+enable_tls = "Opportunistic"
+
+[[provider."yahoo".automation]]
+regex = ['''421.*temporarily rejected''', '''VS3-IP5''', '''rate limit''']
+action = [
+    { SetConfig = { name = "max_message_rate", value = "10/min" } },
+    { SetConfig = { name = "connection_limit", value = 1 } },
+]
+duration = "6h"
+
+# ============================================
+# APPLE / iCLOUD
+# ============================================
+[provider."apple"]
+match = [
+    { MXSuffix = ".icloud.com" },
+    { MXSuffix = ".apple.com" },
+    { MXSuffix = ".me.com" },
+]
+connection_limit = 5
+max_connection_rate = "5/min"
+max_message_rate = "60/min"
+max_deliveries_per_connection = 30
+enable_tls = "Required"
+
+[[provider."apple".automation]]
+regex = ['''temporarily unavailable''', '''Service refused''', '''proofpoint''']
+action = [
+    { SetConfig = { name = "max_message_rate", value = "15/min" } },
+    { SetConfig = { name = "connection_limit", value = 2 } },
+]
+duration = "4h"
+
+# ============================================
+# YANDEX - Strict spam filtering
+# ============================================
+[provider."yandex"]
+match = [{ MXSuffix = ".yandex.ru" }, { MXSuffix = ".yandex.net" }]
+connection_limit = 3
+max_connection_rate = "3/min"
+max_message_rate = "20/min"
+max_deliveries_per_connection = 10
+enable_tls = "Opportunistic"
+
+[[provider."yandex".automation]]
+regex = ['''spam.*rejected''', '''450.*Try again later''']
+action = [
+    { SetConfig = { name = "max_message_rate", value = "5/min" } },
+    { SetConfig = { name = "connection_limit", value = 1 } },
+]
+duration = "8h"
+
+# ============================================
+# MAIL.RU - Similar to Yandex
+# ============================================
+[provider."mailru"]
+match = [{ MXSuffix = ".mail.ru" }]
+connection_limit = 3
+max_connection_rate = "3/min"
+max_message_rate = "20/min"
+max_deliveries_per_connection = 10
+enable_tls = "Opportunistic"
+
+[[provider."mailru".automation]]
+regex = ['''spam.*rejected''', '''421.*try again''']
+action = [
+    { SetConfig = { name = "max_message_rate", value = "5/min" } },
+    { SetConfig = { name = "connection_limit", value = 1 } },
+]
+duration = "8h"
+
+# ============================================
+# PROOFPOINT - Enterprise email security
+# ============================================
+[provider."proofpoint"]
+match = [{ MXSuffix = ".pphosted.com" }]
+connection_limit = 5
+max_connection_rate = "5/min"
+max_message_rate = "50/min"
+max_deliveries_per_connection = 30
+enable_tls = "Opportunistic"
+
+[[provider."proofpoint".automation]]
+regex = ['''Blocked''', '''451.*try again''']
+action = [
+    { SetConfig = { name = "max_message_rate", value = "10/min" } },
+    { SetConfig = { name = "connection_limit", value = 2 } },
+]
+duration = "4h"
+
+# ============================================
+# MIMECAST
+# ============================================
+[provider."mimecast"]
+match = [{ MXSuffix = ".mimecast.com" }]
+connection_limit = 5
+max_connection_rate = "5/min"
+max_message_rate = "50/min"
+max_deliveries_per_connection = 30
+enable_tls = "Opportunistic"
+
+# ============================================
+# DEFAULT - All other domains
+# ============================================
+["default"]
+connection_limit = 8
+max_connection_rate = "15/min"
+max_deliveries_per_connection = 50
+max_message_rate = "100/min"
+idle_timeout = "60s"
+enable_tls = "Opportunistic"
+consecutive_connection_failures_before_delay = 50
+
+[["default".automation]]
+regex = [
+    '''temporarily deferred''',
+    '''rate limit''',
+    '''too many connections''',
+    '''try again later''',
+]
+action = [
+    { SetConfig = { name = "max_message_rate", value = "20/min" } },
+    { SetConfig = { name = "connection_limit", value = 2 } },
+]
+duration = "2h"
