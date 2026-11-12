@@ -11,7 +11,6 @@ import {
 import { env } from "../../config/env";
 import { mailConfig } from "../../config/mailConfig";
 import { Logging } from "../../lib/logs";
-import { mailWorkers } from "../../lib/workers";
 import type { DsnRecipient } from "../../lib/workers/mailTasks";
 import type {
 	OutboundQueue,
@@ -19,6 +18,7 @@ import type {
 } from "../../server/mta/OutboundQueue";
 import type { BounceRegistry } from "./BounceRegistry";
 import { buildDsn, type DsnRecipientReport } from "./DsnBuilder";
+import { type DsnAnalysis, DsnProcessor, verpIdOf } from "./DsnProcessor";
 import type { SuppressionList } from "./SuppressionList";
 
 export interface BounceEvent {
@@ -61,7 +61,6 @@ export interface BounceProcessorOptions {
 	suppression: SuppressionList | null;
 }
 
-const VERP_LOCAL_PART = /^bounce\+([0-9a-f-]{36})$/i;
 const ADDRESS_FAILURE_CLASSIFICATIONS = new Set<string>(
 	KUMO_ADDRESS_FAILURE_CLASSIFICATIONS,
 );
@@ -70,8 +69,6 @@ const isAddressFailure = (status: string) =>
 	/^5\.1\.\d+$/.test(status) || status === "5.2.1";
 const isNullOrDaemon = (address?: string) =>
 	!address || /^(mailer-daemon|postmaster)@/i.test(address);
-const verpIdOf = (address?: string) =>
-	VERP_LOCAL_PART.exec((address ?? "").split("@")[0])?.[1];
 const actionOf = (type: BounceType) =>
 	type === BOUNCE_TYPE.SOFT
 		? "delayed"
@@ -81,8 +78,10 @@ const actionOf = (type: BounceType) =>
 
 export class BounceProcessor {
 	private webhooksInFlight = 0;
+	private readonly dsn: DsnProcessor;
 
 	constructor(private readonly options: BounceProcessorOptions) {
+		this.dsn = new DsnProcessor(options.registry);
 		options.queue.on("failed", (event: QueueFailureEvent) => {
 			this.handleQueueFailure(event).catch((error) =>
 				Logging.dev(
@@ -106,61 +105,71 @@ export class BounceProcessor {
 		return Boolean(domain) && address.toLowerCase().endsWith(`@${domain}`);
 	}
 
+	bounceAddressFor(queueId: string, sender: string): string | undefined {
+		const domain = env.bounce.domain;
+		return domain && !isNullOrDaemon(sender)
+			? `bounce+${queueId}@${domain}`
+			: undefined;
+	}
+
 	async prepareReturnPath(
 		queueId: string,
 		sender: string,
 		recipients: string[],
 	): Promise<string> {
-		const domain = env.bounce.domain;
-		if (!domain || isNullOrDaemon(sender)) return sender;
+		if (isNullOrDaemon(sender)) return sender;
 		await this.options.registry.track({ id: queueId, sender, recipients });
-		return `bounce+${queueId}@${domain}`;
+		return this.bounceAddressFor(queueId, sender) ?? sender;
 	}
 
 	async handleIncomingBounce(raw: Buffer, recipients: string[]): Promise<void> {
-		const parsed = await mailWorkers.parseDsn({
-			raw,
-			maxHeaderBytes: MAIL_LIMITS.MAX_ORIGINAL_HEADERS_BYTES,
-		});
-		const verpId = recipients.map(verpIdOf).find(Boolean);
-		const tracked = verpId
-			? await this.options.registry.get(verpId)
-			: undefined;
-		const queueId = verpId ?? parsed.queueId;
-
-		if (parsed.kind === "auto-reply") {
-			Logging.dev(
-				`Ignoring auto-reply sent to bounce address for ${queueId ?? "unknown message"}`,
+		const analysis = await this.dsn.analyze(raw, recipients);
+		const events = this.recordReport(analysis, "bounce address");
+		const failures = events.filter(
+			(e) => e.type === BOUNCE_TYPE.HARD && e.verified,
+		);
+		if (analysis.tracked && failures.length) {
+			await this.notifySender(
+				analysis.tracked.sender,
+				failures.map(toReport),
+				analysis.queueId,
+				analysis.originalHeaders,
 			);
-			return;
 		}
-		if (!parsed.recipients.length) {
+	}
+
+	async handleDeliveryReport(raw: Buffer): Promise<void> {
+		const analysis = await this.dsn.analyze(raw, []);
+		this.recordReport(analysis, "mailbox");
+	}
+
+	private recordReport(
+		analysis: DsnAnalysis,
+		arrivedAt: string,
+	): BounceEvent[] {
+		const label = analysis.queueId ?? "unknown message";
+		if (analysis.kind === "auto-reply") {
+			Logging.dev(`Ignoring auto-reply at the ${arrivedAt} for ${label}`);
+			return [];
+		}
+		if (!analysis.recipients.length) {
 			Logging.dev(
-				`Bounce for ${queueId ?? "unknown message"} has no delivery status report, subject: ${parsed.subject ?? ""}`,
+				`Report at the ${arrivedAt} for ${label} has no delivery status, subject: ${analysis.subject ?? ""}`,
 				"notice",
 			);
-			return;
+			return [];
 		}
-
-		const events = parsed.recipients
+		const events = analysis.recipients
 			.map((r) =>
-				this.eventFromDsn(r, parsed.kind === "feedback", {
-					queueId,
-					tracked: tracked?.sender,
+				this.eventFromDsn(r, analysis.kind === "feedback", {
+					queueId: analysis.queueId,
+					originalSender: analysis.tracked?.sender,
+					verified: DsnProcessor.isVerified(analysis, r.recipient),
 				}),
 			)
 			.filter((event): event is BounceEvent => event !== null);
 		for (const event of events) this.record(event);
-
-		const failures = events.filter((e) => e.type === BOUNCE_TYPE.HARD);
-		if (tracked && failures.length) {
-			await this.notifySender(
-				tracked.sender,
-				failures.map(toReport),
-				queueId,
-				parsed.originalHeaders,
-			);
-		}
+		return events;
 	}
 
 	async handleKumoEvent(record: KumoLogRecord): Promise<void> {
@@ -243,7 +252,7 @@ export class BounceProcessor {
 	private eventFromDsn(
 		dsn: DsnRecipient,
 		complaint: boolean,
-		context: { queueId?: string; tracked?: string },
+		context: { queueId?: string; originalSender?: string; verified: boolean },
 	): BounceEvent | null {
 		const type: BounceType | null = complaint
 			? BOUNCE_TYPE.COMPLAINT
@@ -259,8 +268,8 @@ export class BounceProcessor {
 			recipient: dsn.recipient,
 			status: dsn.status,
 			action: dsn.action,
-			verified: Boolean(context.tracked),
-			originalSender: context.tracked,
+			verified: context.verified,
+			originalSender: context.originalSender,
 			queueId: context.queueId,
 			diagnostic: dsn.diagnostic,
 			remoteMta: dsn.remoteMta,

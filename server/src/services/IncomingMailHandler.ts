@@ -18,6 +18,7 @@ import { Logging } from "../lib/logs";
 import { mailWorkers } from "../lib/workers";
 import { RFC5322MailComposer } from "../server/config/MailComposer";
 import { getMailRuntime } from "../server/mta/runtime";
+import { DsnProcessor } from "./bounce/DsnProcessor";
 import { IncomingPolicy } from "./IncomingPolicy";
 
 let pgpWarningShown = false;
@@ -104,6 +105,12 @@ class IncomingMailHandler {
 				if (bounceRecipients.length === recipients.length) {
 					return callback(null, smtpReply("BOUNCE_ACCEPTED").text);
 				}
+			} else if (DsnProcessor.isDeliveryReport(original)) {
+				await bounces
+					.handleDeliveryReport(original)
+					.catch((error) =>
+						Logging.dev(`Delivery report processing failed: ${error}`, "error"),
+					);
 			}
 
 			const sender = session.envelope.mailFrom
