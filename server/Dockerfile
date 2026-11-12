@@ -10,6 +10,7 @@ RUN bun install --production
 COPY tsconfig.json ./
 COPY src ./src
 COPY public ./public
+COPY config ./config
 
 EXPOSE 25 587
 CMD ["bun", "src/main.ts"]
