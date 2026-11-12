@@ -1,0 +1,48 @@
+---
+title: Prerequisites
+description: What you need before you start the mail server.
+---
+
+A mail server is judged by other mail servers from the first message. Get these four things right before you install anything.
+
+## Checklist
+
+- A registered domain name.
+- A server with a static public IP address.
+- An SSL/TLS certificate for the server's hostname. Do not use a self-signed certificate.
+- Reverse DNS (a PTR record) for the server's IP address that matches the server's hostname.
+
+<Callout title="Reverse DNS is the most important step" type="warn">
+  Many providers reject mail from an IP address that has no PTR record, or whose PTR record does not match the name the server announces. Ask your hosting provider to set it up.
+</Callout>
+
+## Ports
+
+| Port | Used for |
+|------|----------|
+| 25 | Receiving mail from other servers. Also used when your server delivers mail directly to another server. |
+| 587 | Mail clients and apps submit mail to your server (SMTP with authentication). |
+| 465 | Allow it in the firewall if you plan to use implicit-TLS submission. |
+
+Allow these ports in your firewall. Some cloud providers block outbound port 25 by default, so ask them to lift the block if direct delivery fails.
+
+## Hostnames
+
+The server uses two hostnames, set in `server/.env`:
+
+| Variable | Example | Purpose |
+|----------|---------|---------|
+| `INCOMING_MAIL_HOST` | `mx.example.com` | The name in your domain's MX record. Receives mail on port 25. |
+| `OUTGOING_MAIL_HOST` | `mail.example.com` | The name clients connect to for sending, on port 587. |
+
+Incoming and outgoing are separate servers in separate files, so you can run several of each (for example `mx.example.com` and `mx2.example.com` for receiving, and `smtp.example.com` or `mail.example.com` for sending). Keeping them apart avoids one large file that handles both.
+
+Create an A record for each hostname that points to your server's IP address, and make sure the hostname matches your TLS certificate.
+
+## Next
+
+<Cards>
+  <Card title="Installation" href="/docs/getting-started/installation">
+    Install and start the server.
+  </Card>
+</Cards>
