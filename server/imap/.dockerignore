@@ -1,0 +1,4 @@
+# Real configs hold passwords: they are mounted at run time, never baked in.
+conf/imap.xml
+conf/users.xml
+*.md

@@ -1,13 +1,21 @@
-# IMAP server (Go + Gluon). WIP: go.mod has no requirements yet and the
-# import paths don't match the folders, so this build fails until that's fixed.
-FROM golang:1.22-bookworm AS build
+# IMAP server (Gluon) and its admin CLI, imapctl.
+# Gluon keeps its cache in SQLite, so the build needs cgo.
+FROM golang:1.26-bookworm AS build
 WORKDIR /src
-COPY go.mod go.sum* ./
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /out/imap .
+RUN CGO_ENABLED=1 go build -trimpath -o /out/imap . \
+ && CGO_ENABLED=0 go build -trimpath -o /out/imapctl ./cmd/imapctl
 
 FROM debian:bookworm-slim
-COPY --from=build /out/imap /usr/local/bin/imap
+RUN useradd --system --uid 1000 --home-dir /data --shell /usr/sbin/nologin imap \
+ && install -d -o imap -g imap -m 0700 /data /run/imap \
+ && install -d -o imap -g imap /etc/imap
+COPY --from=build /out/imap /out/imapctl /usr/local/bin/
+USER imap
+ENV IMAP_CONFIG=/etc/imap/imap.xml \
+    IMAP_CONTROL_SOCKET=/run/imap/control.sock
 EXPOSE 143
+HEALTHCHECK --interval=30s --timeout=5s CMD ["imapctl", "status"]
 ENTRYPOINT ["imap"]
