@@ -1,26 +1,39 @@
 # docs
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
+The documentation site for NodeMailServer, built with
+[Next.js](https://nextjs.org) and [Fumadocs](https://fumadocs.vercel.app).
 
-Run development server:
+## Run it
 
 ```bash
-npm run dev
-# or
-pnpm dev
-# or
-yarn dev
+cd docs
+bun install
+bun run dev
 ```
 
-Open http://localhost:3000 with your browser to see the result.
+Open http://localhost:3000. Build for production with `bun run build`.
 
-## Learn More
+## Where things are
 
-To learn more about Next.js and Fumadocs, take a look at the following
-resources:
+| Path | Contents |
+|------|----------|
+| `content/docs/` | The pages, as `.mdx` files. |
+| `content/docs/**/meta.json` | The title and page order of each sidebar section. |
+| `public/images/` | Screenshots used in the pages, referenced as `/images/<name>.png`. |
+| `app/` | The Next.js layouts and the landing page. |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js
-  features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [Fumadocs](https://fumadocs.vercel.app) - learn about Fumadocs
+## Add a page
+
+1. Create `content/docs/<section>/<name>.mdx` with a front matter block:
+
+   ```mdx
+   ---
+   title: Page title
+   description: One sentence that shows under the title.
+   ---
+   ```
+
+2. Add `<name>` to the `pages` list in that section's `meta.json`.
+
+Pages can use the built-in `Callout` (`type` is `info`, `warn` or `error`) and
+`Cards` and `Card` components, plus normal Markdown.
