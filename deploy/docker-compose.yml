@@ -1,0 +1,63 @@
+# Whole mail stack. Run from the repo root:
+#
+#   docker compose -f deploy/docker-compose.yml up -d                  # inbound + outbound + redis
+#   docker compose -f deploy/docker-compose.yml --profile imap up -d   # also imap (WIP, doesn't build yet)
+#
+# Port ownership: inbound (Node) publishes 25, outbound (KumoMTA) publishes 587.
+# The Node app still opens 587 inside its container, but it isn't published.
+# To send through the Node path instead, publish 587 on inbound and remove it from outbound.
+
+name: node-mail-server
+
+services:
+  # Receiving MX: SMTP on :25, DKIM/SPF/DMARC checks, PGP at rest.
+  inbound:
+    build: ../server
+    env_file: ../server/.env
+    ports:
+      - "25:25"
+    restart: unless-stopped
+
+  # Sending MTA (KumoMTA): authenticated submission on :587, DKIM, queues, delivery.
+  outbound:
+    image: ghcr.io/kumocorp/kumomta:latest
+    env_file: ../outbound/.env
+    ports:
+      - "587:587"
+    volumes:
+      - ../outbound/policy:/opt/kumomta/etc/policy:ro
+      - kumo-spool:/var/spool/kumomta
+      - kumo-logs:/var/log/kumomta
+      # Only needed when DKIM_BACKEND=file (keys at dkim/<domain>/<selector>.key):
+      # - ../outbound/dkim:/opt/kumomta/etc/dkim:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Mailbox access (Go + Gluon) on :143. Opt-in until it builds.
+  imap:
+    profiles: ["imap"]
+    build: ../server/imap
+    environment:
+      GLUON_HOST: 0.0.0.0:143
+      GLUON_DIR: /data
+    ports:
+      - "143:143"
+    volumes:
+      - imap-data:/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Shared by outbound (DKIM_BACKEND=redis) and imap. Not published.
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  kumo-spool:
+  kumo-logs:
+  imap-data:
+  redis-data:
