@@ -11,7 +11,7 @@ Settings are read from `.env` files. Copy the example file and edit it:
 | KumoMTA | `outbound/.env.example` | `outbound/.env` |
 | KumoMTA relay | `relay/.env.example` | `relay/.env` |
 
-All `.env` files are in `.gitignore`. `server/.env.example` is always the most current list.
+All `.env` files are in `.gitignore`. `server/.env.example` is always the most current list. Only `server/src/config/env.ts` reads environment variables, and an invalid number or choice stops the server at startup with a message naming the variable.
 
 ## Node mail server (`server/.env`)
 
@@ -19,11 +19,10 @@ All `.env` files are in `.gitignore`. `server/.env.example` is always the most c
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `INCOMING_MAIL_HOST` | none | Hostname of the receiving server, for example `mx.example.com`. Also used for the MX record. |
+| `INCOMING_MAIL_HOST` | the machine's hostname | Hostname of the receiving server, for example `mx.example.com`. Also used for the MX record. |
 | `OUTGOING_MAIL_HOST` | `INCOMING_MAIL_HOST` | Hostname of the sending server, for example `mail.example.com`. |
 | `MAIL_SERVER_IP` | none | The server's public IP address. Used to build the SPF record. |
-| `MAX_EMAILS_PER_MINUTE` | `5` | Rate limit for the submission port. |
-| `INCOMING_MAX_MESSAGES_PER_MINUTE` | `100` | Per-IP rate limit on port 25. Clients over the limit get a temporary `421`. |
+| `MAX_EMAILS_PER_MINUTE` | `5` | Rate limit for the submission port and the JSON API, unless `outgoing.rateLimit.maxConnectionsPerMinute` is set in `mail.config.json`. |
 | `DOMAIN_NAME` | none | The domain to generate DNS records for. Only used by the generator (`start.ts`), which the setup script sets. |
 
 ### TLS
@@ -53,25 +52,95 @@ See [TLS certificates](/docs/getting-started/tls-certificates).
 
 See [PGP encryption](/docs/guides/pgp-encryption).
 
-### Outbound queue
+### Files
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MAIL_SPOOL_DIR` | `./spool` | Where queued mail is stored. |
-| `MAX_CONCURRENT_DELIVERIES` | `10` | How many deliveries run at the same time. |
-| `MAIL_QUEUE_MAX_AGE_HOURS` | `48` | Give up on a message after this many hours. |
+| `MAIL_SPOOL_DIR` | `./spool` | Where queued mail, the bounce tracking records and the suppression list are stored. |
+| `MAIL_CONFIG_PATH` | `./config/mail.config.json` | Behaviour: checks, limits, queue and bounces. |
+| `SMTP_MESSAGES_PATH` | `./config/smtp-messages.json` | The text and code of each SMTP reply. |
 
-### Relay (optional)
+The queue settings that used to be variables (`MAX_CONCURRENT_DELIVERIES`, `MAIL_QUEUE_MAX_AGE_HOURS`) and the port 25 rate limit (`INCOMING_MAX_MESSAGES_PER_MINUTE`) are now in `mail.config.json`. See [Configuration files](/docs/reference/configuration-files).
 
-Set `OUTBOUND_RELAY_HOST` to send through a relay such as KumoMTA instead of delivering directly.
+### Outbound driver
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTBOUND_RELAY_HOST` | empty | Relay hostname. Leave empty for direct delivery. |
+| `OUTBOUND_DRIVER` | `relay` if `OUTBOUND_RELAY_HOST` is set, otherwise `direct` | `direct` (or `node`), `go`, `relay` or `kumo-http`. Any other value stops the server at startup. |
+
+See [Outbound drivers](/docs/guides/outbound-drivers).
+
+### Relay driver
+
+Used when `OUTBOUND_DRIVER` is `relay`. Setting `OUTBOUND_RELAY_HOST` alone also selects it.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OUTBOUND_RELAY_HOST` | empty | Relay hostname. |
 | `OUTBOUND_RELAY_PORT` | `587` | Relay port. |
 | `OUTBOUND_RELAY_USER` | empty | Relay username. |
 | `OUTBOUND_RELAY_PASS` | empty | Relay password. |
 | `OUTBOUND_RELAY_CA_PATH` | empty | Certificate authority file, if the relay uses your own CA. |
+| `OUTBOUND_RELAY_TLS` | `verify`, or `insecure` for a loopback host | `verify` requires a valid certificate. `insecure` accepts a self-signed one. `none` sends in plain text. |
+| `OUTBOUND_RELAY_MAX_CONNECTIONS` | `5` | Connections kept open to the relay. |
+
+### KumoMTA HTTP driver
+
+Used when `OUTBOUND_DRIVER` is `kumo-http`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KUMO_HTTP_URL` | `http://127.0.0.1:8000` | KumoMTA's HTTP listener. |
+| `KUMO_HTTP_USER` | empty | Basic authentication user. |
+| `KUMO_HTTP_PASS` | empty | Basic authentication password. |
+| `KUMO_HTTP_TIMEOUT_MS` | `30000` | Timeout for each request. |
+| `KUMO_HTTP_STATIC_CONTENT` | `true` | Sends `template_dialect: "Static"` so KumoMTA does not template the message. Needs KumoMTA 2025.12.02 or newer. Set to `false` for older versions. |
+
+### Go MTA driver
+
+Used when `OUTBOUND_DRIVER` is `go`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GO_MTA_URL` | `http://127.0.0.1:2580` | The Go MTA service. |
+| `GO_MTA_TOKEN` | empty | Bearer token for the service. |
+| `GO_MTA_TIMEOUT_MS` | `300000` | Timeout for each delivery request. |
+
+### Bounces
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BOUNCE_DOMAIN` | empty | Domain for return addresses, for example `bounces.example.com`. Messages keep the sender's own return address until it is set. |
+| `BOUNCE_SMTP_HOST` | `0.0.0.0` | Address of the bounce SMTP server. |
+| `BOUNCE_SMTP_PORT` | `2525` | Port of the bounce SMTP server. `0` turns it off. |
+| `BOUNCE_HTTP_HOST` | `0.0.0.0` | Address of the bounce HTTP server. |
+| `BOUNCE_HTTP_PORT` | `8025` | Port of the bounce HTTP server. `0` turns it off. |
+| `BOUNCE_WEBHOOK_TOKEN` | empty | Bearer token for the bounce HTTP server. The HTTP server does not start without it. |
+| `BOUNCE_EVENTS_WEBHOOK_URL` | empty | Every bounce event is posted here as JSON. |
+| `BOUNCE_EVENTS_WEBHOOK_TOKEN` | empty | Sent as a Bearer token with each event. |
+
+See [Bounces](/docs/guides/bounces).
+
+### JSON send API
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAIL_API_HOST` | `0.0.0.0` | Address to listen on. |
+| `MAIL_API_PORT` | `8080` | Port to listen on. |
+| `MAIL_API_TOKEN` | empty | Bearer token. The API does not start without it. |
+
+See [JSON send API](/docs/guides/json-api).
+
+### Worker threads
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAIL_WORKERS` | CPU cores minus 1, at most 4 | Number of threads. `0` uses the main thread. |
+| `MAIL_WORKER_CONCURRENCY` | `4` | Tasks one worker runs at the same time. |
+| `MAIL_WORKER_MAX_QUEUE` | `1000` | Tasks allowed to wait. When full, clients get `451 4.3.2`. |
+| `MAIL_WORKER_TIMEOUT_MS` | `120000` | Longest a single task may run. |
+
+See [Background workers](/docs/reference/background-workers).
 
 ### ARC (optional)
 

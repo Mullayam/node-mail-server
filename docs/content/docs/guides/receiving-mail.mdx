@@ -1,31 +1,42 @@
 ---
 title: Receiving mail
-description: What the server does with a message that arrives on port 25.
+description: What the server does with a message that arrives on port 25, and which checks you can turn on, off or tighten.
 ---
 
 The receiving server (`IncomingServer` and `IncomingMailHandler`) listens on port 25 and handles mail from other servers. Authentication is disabled on this port, because senders are other mail servers, not your users.
 
+Which checks run, and what happens when one fails, is set in `server/config/mail.config.json`. The file reloads when you save it. See [Configuration files](/docs/reference/configuration-files).
+
 ## The pipeline
 
-When an email arrives on port 25, it goes through three SMTP stages.
+When an email arrives on port 25, it goes through four stages.
 
-### 1. MAIL FROM
+### 1. Connect
 
-- Applies a per-IP rate limit. When a client goes over `INCOMING_MAX_MESSAGES_PER_MINUTE`, the server answers with a temporary `421` error, so a legitimate sender retries later.
-- Rejects `.temp@` addresses.
+- Optional reverse DNS check (`incoming.checks.reverseDns`). The client's IP must have a PTR record, and that name must resolve back to the same IP. It is off by default, and when it fails it tags the message.
+- Clients in `incoming.trustedNetworks` (loopback by default) skip the checks and the rate limit.
 
-### 2. RCPT TO
+### 2. MAIL FROM
 
-- Accepts a null sender, because delivery failure notices (bounces) are sent that way.
-- Rejects the message only if the sender's domain has no MX, A or AAAA record.
-- Answers with a temporary `451` if DNS is down, so the sender retries.
+- Applies a per-IP rate limit (`incoming.rateLimit`). When a client goes over it, the server answers with a temporary `421` error, so a legitimate sender retries later.
+- Rejects `.temp@` addresses and known disposable sender addresses (`checks.disposableSender`).
+- Rejects the sender when its domain has no MX, A or AAAA record (`checks.senderDomain`). It answers with a temporary `451` if DNS is down, so the sender retries.
+- Accepts a null sender (`MAIL FROM:<>`) without the domain check, because delivery failure notices (bounces) are sent that way.
 
-### 3. DATA
+### 3. RCPT TO
 
-- Enforces the 10 MB size limit.
-- Runs DKIM, SPF and DMARC checks with `mailauth`, against the connecting client's IP address and its HELO name, on the original unmodified message.
-- Rejects with `550` only when DMARC fails and the sender's policy is `reject`.
+- Rejects the recipient when its domain is not in `incoming.recipients.acceptedDomains`. An empty list accepts any domain.
+- Rejects the recipient when it is not in `incoming.recipients.knownRecipients`. An empty list accepts any user.
+- Enforces `incoming.maxRecipients`.
+- Accepts a recipient at `BOUNCE_DOMAIN` whatever the two lists say, and hands it to the [bounce processor](/docs/guides/bounces).
+
+### 4. DATA
+
+- Enforces `incoming.maxMessageSizeBytes`.
+- Runs DKIM, SPF and DMARC checks with `mailauth`, in a [worker thread](/docs/reference/background-workers), against the connecting client's IP address and its HELO name, on the original unmodified message.
+- Applies the action you set for each result (see [Policy actions](#policy-actions)).
 - Removes any `X-AE-*` headers and forged `Authentication-Results` headers that the sender supplied, then adds the server's own.
+- Adds the `incoming.customHeaders` after the checks.
 - Seals the message with ARC headers when `ARC_PRIVATE_KEY_PATH` and `ARC_SIGNING_DOMAIN` are set. This keeps authentication working when mail is forwarded.
 - Encrypts the final message with PGP for storage when the PGP keys are set. See [PGP encryption](/docs/guides/pgp-encryption).
 
@@ -33,14 +44,32 @@ When an email arrives on port 25, it goes through three SMTP stages.
   The `X-AE-*` headers are added only after authentication has finished, so they never break a DKIM signature.
 </Callout>
 
+## Policy actions
+
+Each SPF, DKIM, DMARC, reverse DNS and sender-domain result has an action:
+
+| Action | Result |
+|--------|--------|
+| `accept` | Ignore the result. |
+| `tag` | Accept the message, and add `X-AE-Spam-Flag: YES` and `X-AE-Policy-Flags` to it. |
+| `tempfail` | Reply `4xx`, so the sender retries later. |
+| `reject` | Reply `5xx` with an enhanced status code from RFC 7372. |
+
+By default the server rejects mail that fails DMARC with `p=reject`, tags mail that fails SPF, DKIM or reverse DNS, and accepts everything else. A DNS error never causes a hard reject. It becomes a temporary error. The full list of checks, settings and reply codes is in [Configuration files](/docs/reference/configuration-files#incoming-checks).
+
+## Delivery reports
+
+A delivery report (a `multipart/report` message of type `delivery-status`) sent to a normal mailbox is delivered as usual. The DSN processor also reads it, matches it to the message you sent, and records it. A report that arrives this way never adds an address to the suppression list, because it cannot be verified. See [Bounces](/docs/guides/bounces#the-dsn-processor).
+
 ## Settings
 
-| Variable | Purpose |
-|----------|---------|
-| `INCOMING_MAIL_HOST` | Hostname the receiving server announces. |
-| `INCOMING_MAX_MESSAGES_PER_MINUTE` | Per-IP rate limit on port 25. |
-| `ARC_PRIVATE_KEY_PATH`, `ARC_SIGNING_DOMAIN`, `ARC_SELECTOR` | Optional ARC sealing. |
-| `PGP_*` | Optional encryption at rest. |
+| Setting | Where | Purpose |
+|---------|-------|---------|
+| `INCOMING_MAIL_HOST` | `server/.env` | Hostname the receiving server announces. |
+| `ARC_PRIVATE_KEY_PATH`, `ARC_SIGNING_DOMAIN`, `ARC_SELECTOR` | `server/.env` | Optional ARC sealing. |
+| `PGP_*` | `server/.env` | Optional encryption at rest. |
+| `incoming.*` | `server/config/mail.config.json` | Limits, checks, accepted domains, trusted networks and custom headers. |
+| `GREETING`, `RELAY_DENIED`, `DMARC_REJECT` and others | `server/config/smtp-messages.json` | The text and code of each reply. |
 
 See [Environment variables](/docs/reference/environment-variables) for defaults.
 
@@ -49,6 +78,7 @@ See [Environment variables](/docs/reference/environment-variables) for defaults.
 | Component | File | Purpose |
 |-----------|------|---------|
 | `IncomingMailHandler` | `server/src/services/IncomingMailHandler.ts` | Handles MAIL FROM, RCPT TO and DATA. |
+| `IncomingPolicy` | `server/src/services/IncomingPolicy.ts` | The reverse DNS, sender, recipient, SPF, DKIM and DMARC decisions. |
 | `MailAuth` | `server/src/server/config/MailAuth.ts` | DKIM verification, SPF, DMARC policy, MTA-STS and ARC sealing. |
 | `MailComposer` | `server/src/server/config/MailComposer.ts` | Builds RFC 5322 headers and MIME messages. |
 | `DNSChecker` | `server/src/server/config/DnsChecker.ts` | Resolves MX, SPF, DKIM, DMARC and TXT records and checks TCP ports. |

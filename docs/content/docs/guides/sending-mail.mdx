@@ -1,9 +1,14 @@
 ---
 title: Sending mail
-description: Submit mail on port 587, how the outbound queue retries, and how mail is delivered directly or through a relay.
+description: Submit mail on port 587 or with the JSON API, how headers are added, how the outbound queue retries, and how mail is delivered.
 ---
 
-Mail clients and your own apps send mail by connecting to the outgoing server on port 587 with authentication.
+Mail clients and your own apps send mail in one of two ways:
+
+- **SMTP** on port 587, with authentication.
+- **HTTP**, with the [JSON send API](/docs/guides/json-api).
+
+Both end in the same pipeline, so Bcc handling, headers, DKIM signing and the queue behave the same.
 
 ## Connect a client or app
 
@@ -19,11 +24,39 @@ When a client submits mail on port 587:
 
 1. **AUTH.** LOGIN authentication is required.
 2. **MAIL FROM.** Validates the sender and checks for relay.
-3. **RCPT TO.** Logs each recipient.
+3. **RCPT TO.** Checks each recipient against `outgoing.maxRecipients`.
 4. **DATA.** Processes the message:
    - Recipients come only from the SMTP envelope (the `RCPT TO` commands), so Bcc works and is never shown to other recipients.
    - Any `Bcc:` header is removed. The rest of the message is left unchanged.
-   - The message is signed with DKIM, written to the outbound queue, and the server replies `250 Message queued as <id>`.
+   - The server adds [headers](#outgoing-headers), signs the message with DKIM, writes it to the outbound queue, and replies `250 Message queued as <id>`.
+
+The JSON send API builds the MIME message first, then runs the same steps.
+
+## Outgoing headers
+
+The server adds these to every message before signing it:
+
+| Header | When | Setting |
+|--------|------|---------|
+| `X-AE-Queue-Id: <id>` | Always | none |
+| `X-AE-Bounce-Address: bounce+<id>@BOUNCE_DOMAIN` | When `BOUNCE_DOMAIN` is set | `outgoing.bounceHeader.enabled`, `outgoing.bounceHeader.name` |
+| Your own headers | When `outgoing.customHeaders.enabled` is `true` | `outgoing.customHeaders.headers` |
+
+Set your own headers in `server/config/mail.config.json`. Values can use `{queueId}` and `{sender}`:
+
+```json
+"customHeaders": {
+  "enabled": true,
+  "headers": {
+    "X-Campaign": "spring-{queueId}",
+    "List-Unsubscribe": "<mailto:unsubscribe@yourdomain.com?subject={queueId}>"
+  }
+}
+```
+
+A header set here replaces a header with the same name sent by the client. Header names are checked when the file loads, and a bad name keeps the previous settings. The bounce header name is set in the same way, in `outgoing.bounceHeader.name`.
+
+The headers are added before DKIM signing, so they are covered by the signature.
 
 ## The outbound queue
 
@@ -32,40 +65,38 @@ Queued mail is kept in `MAIL_SPOOL_DIR`, so it survives a restart. Each recipien
 | Result | What happens |
 |--------|--------------|
 | Delivered | Removed from the queue. |
-| Permanent failure (`5xx`) | Removed and logged. |
-| Temporary failure (`4xx`, timeout, connection refused) | Retried after 1, 5, 15, 30, 60 and 120 minutes, then every 240 minutes, until `MAIL_QUEUE_MAX_AGE_HOURS` has passed. |
+| Permanent failure (`5xx`) | Removed and logged. The sender gets a bounce report. |
+| Temporary failure (`4xx`, timeout, connection refused) | Retried on the `queue.retryDelaysMinutes` schedule, by default after 1, 5, 15, 30, 60 and 120 minutes, then every 240 minutes, until `queue.maxAgeHours` (default 48) has passed. |
+| Address on the [suppression list](/docs/guides/bounces#what-happens-to-a-bounce) | Fails straight away without a delivery attempt. |
+
+`queue.maxConcurrent` (default 10) sets how many deliveries run at the same time. All queue settings are in [Configuration files](/docs/reference/configuration-files#queue-and-bounces).
 
 ## How mail is delivered
 
-Delivery goes to one of two places:
+`OUTBOUND_DRIVER` decides where the queue sends each message:
 
-- **Directly** to the recipient's MX server. This is the default.
-- **Through a relay** (smarthost) such as [KumoMTA](/docs/outbound/overview), when `OUTBOUND_RELAY_HOST` is set.
+- **`direct`** delivers to the recipient's MX server from this machine. This is the default.
+- **`go`** sends through the Go MTA service.
+- **`relay`** submits to another SMTP server, such as [KumoMTA](/docs/outbound/overview).
+- **`kumo-http`** posts to KumoMTA's HTTP API.
+
+See [Outbound drivers](/docs/guides/outbound-drivers) for the settings of each, and for what KumoMTA needs.
 
 ### MTA-STS
 
-Direct delivery follows the recipient domain's MTA-STS policy. In `enforce` mode the server requires TLS with a valid certificate and only uses an MX host that the policy allows. Relay connections always verify the certificate, except on loopback.
-
-### Relay settings
-
-```env
-OUTBOUND_RELAY_HOST=
-OUTBOUND_RELAY_PORT=587
-OUTBOUND_RELAY_USER=
-OUTBOUND_RELAY_PASS=
-OUTBOUND_RELAY_CA_PATH=
-```
-
-`OUTBOUND_RELAY_CA_PATH` is optional. Use it when the relay's certificate is signed by your own certificate authority.
+Direct delivery follows the recipient domain's MTA-STS policy. In `enforce` mode the server requires TLS with a valid certificate and only uses an MX host that the policy allows. Relay connections verify the certificate by default, and `OUTBOUND_RELAY_TLS` changes that.
 
 ## Programmatic use
 
-The delivery engine is the `NodeMailerMTA` class. See the [NodeMailerMTA API](/docs/reference/node-mta-api) for `sendMail`, `sendViaRelay` and the result format.
+The direct delivery engine is the `NodeMailerMTA` class. See the [NodeMailerMTA API](/docs/reference/node-mta-api) for `sendMail`, `sendViaRelay` and the result format.
 
 ## Components involved
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `OutgoingMailHandler` | `server/src/services/OutgoingMailHandler.ts` | Authentication, parsing and queueing. |
+| `OutgoingMailHandler` | `server/src/services/OutgoingMailHandler.ts` | Authentication, parsing and queueing for port 587. |
+| `submitOutgoing` | `server/src/services/OutgoingPipeline.ts` | Strips Bcc, adds headers, signs with DKIM and queues. Shared by port 587 and the JSON API. |
+| `OutboundQueue` | `server/src/server/mta/OutboundQueue.ts` | The disk queue, retries and per-recipient results. |
+| Drivers | `server/src/server/mta/drivers/index.ts` | `direct`, `go`, `relay` and `kumo-http`. |
 | `NodeMailerMTA` | `server/src/server/mta/node-mta.ts` | Builds the message, signs with DKIM, resolves MX records and delivers. |
 | `MailComposer` | `server/src/server/config/MailComposer.ts` | RFC 5322 headers and MIME. |

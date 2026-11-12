@@ -7,7 +7,7 @@ description: How the repository is laid out, and which files hold secrets.
 
 ```text
 node-mail-server/
-├── server/          Node mail server (receiving and sending), plus imap/ and demo/
+├── server/          Node mail server (receiving, sending, bounces, JSON API), plus go-mta/, imap/ and demo/
 ├── outbound/        KumoMTA sending engine
 │   ├── policy/      Lua and TOML, mounted at /opt/kumomta/etc/policy
 │   ├── .env.example
@@ -28,6 +28,8 @@ node-mail-server/
 ```text
 server/
 ├── src/             TypeScript source
+├── config/          mail.config.json and smtp-messages.json, reloaded while the server runs
+├── go-mta/          Go delivery service (standard library only)
 ├── imap/            Go IMAP server (Gluon)
 ├── demo/            Small example projects
 ├── public/          Static files and icons
@@ -42,13 +44,15 @@ server/
 | Folder | Contents |
 |--------|----------|
 | `main.ts`, `start.ts` | `main.ts` starts the servers. `start.ts` generates DNS records. |
+| `config/` | `env.ts` (the only file that reads environment variables), `constants.ts` (fixed values and the default settings), `mailConfig.ts` and `smtpMessages.ts` (the JSON files), and `jsonConfig.ts` (loading, validating and reloading them). |
 | `interfaces/` | TypeScript types for DNS records, mail data and PGP keys. |
-| `lib/` | Helpers (email address parsing and other utilities), logging and SMTP type extensions. |
-| `server/` | `IncomingServer.ts` (port 25) and `OutgoingServer.ts` (port 587). |
+| `lib/` | Helpers (email address parsing, raw message handling, the TTL cache, HTTP authentication), logging, SMTP type extensions and `workers/`, the worker thread pool and its tasks. |
+| `server/` | `IncomingServer.ts` (port 25), `OutgoingServer.ts` (port 587), `BounceServer.ts` (bounce SMTP), `BounceWebhookServer.ts` (bounce HTTP) and `ApiServer.ts` (JSON send API). `index.ts` starts them all and shuts them down. |
 | `server/config/` | DNS checking and generation, mail composing (`MailComposer.ts`), authentication (`MailAuth.ts`), spam filtering and PGP in `encryption/`. |
-| `server/mta/` | Mail delivery: `node-mta.ts` and the outbound queue. |
+| `server/mta/` | Mail delivery: `node-mta.ts`, the outbound queue (`OutboundQueue.ts`) and the drivers in `drivers/`. |
 | `server/plugins/` | Filters, image proxy, rate limiter and tracking protection. |
-| `services/` | `IncomingMailHandler.ts`, `OutgoingMailHandler.ts`, `IcsEvents.ts` and `MeetingService.ts`. |
+| `services/` | `IncomingMailHandler.ts`, `IncomingPolicy.ts`, `OutgoingMailHandler.ts`, `OutgoingPipeline.ts`, `JsonMailHandler.ts`, `BounceMailHandler.ts`, `BounceWebhookHandler.ts`, `IcsEvents.ts` and `MeetingService.ts`. |
+| `services/bounce/` | `DsnProcessor.ts`, `BounceProcessor.ts`, `BounceRegistry.ts`, `SuppressionList.ts` and `DsnBuilder.ts`. |
 
 ## Files that hold secrets
 
@@ -56,12 +60,13 @@ These are in `.gitignore`. Commit only the `.example` versions.
 
 | File | Contains |
 |------|----------|
-| `server/.env` | Hostnames, TLS paths, DKIM and PGP keys. |
+| `server/.env` | Hostnames, TLS paths, DKIM and PGP keys, relay, Go MTA and KumoMTA passwords, and the API and bounce tokens. |
 | `outbound/.env` | KumoMTA settings, DKIM service key, webhook secret. |
 | `outbound/policy/users.lua` | SMTP usernames and passwords. Start from `users.example.lua`. |
 | `relay/.env` | Relay settings and the DKIM service key. |
 | `relay/policy/users.lua` | Relay accounts: passwords, domains and webhook secrets. Start from `users.example.lua`. |
 | `server/records.json` | Generated DNS records, **including the DKIM private key**. |
+| `server/spool/` | Queued mail, bounce tracking records and the suppression list. |
 | `*.key`, `*.pem`, `outbound/dkim/`, `relay/dkim/`, `relay/tls/` | Private keys and certificates. |
 
 ## Scripts
