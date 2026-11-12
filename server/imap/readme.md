@@ -1,2 +1,2 @@
-Using [Dovecot](dovecot.md)
-Using ProtonMail [Gluon](gluon.md)
+- **Recommended:** ProtonMail [Gluon](gluon.md)
+- Not used / not recommended: [Dovecot](dovecot.md) (kept for reference only)
