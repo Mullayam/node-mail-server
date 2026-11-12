@@ -10,6 +10,9 @@ dist/
 !.env.example
 outbound/policy/users.lua
 outbound/dkim/
+relay/policy/users.lua
+relay/dkim/
+relay/tls/
 *.key
 *.pem
 

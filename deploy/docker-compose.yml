@@ -1,9 +1,10 @@
 # Whole mail stack. Run from the repo root:
 #
-#   docker compose -f deploy/docker-compose.yml up -d                  # inbound + outbound + redis
+#   docker compose -f deploy/docker-compose.yml up -d                  # inbound + outbound + relay + redis
 #   docker compose -f deploy/docker-compose.yml --profile imap up -d   # also imap (WIP, doesn't build yet)
 #
-# Port ownership: inbound (Node) publishes 25, outbound (KumoMTA) publishes 587.
+# Port ownership: inbound (Node) publishes 25, outbound (KumoMTA) publishes 587,
+# relay (KumoMTA) publishes 2587.
 # The Node app still opens 587 inside its container, but it isn't published.
 # To send through the Node path instead, publish 587 on inbound and remove it from outbound.
 
@@ -34,6 +35,24 @@ services:
       - redis
     restart: unless-stopped
 
+  # Public SMTP relay (KumoMTA) on :2587: AUTH required, each account's events go to its own webhook.
+  relay:
+    image: ghcr.io/kumocorp/kumomta:latest
+    env_file: ../relay/.env
+    ports:
+      - "2587:2587"
+    volumes:
+      - ../relay/policy:/opt/kumomta/etc/policy:ro
+      - relay-spool:/var/spool/kumomta
+      - relay-logs:/var/log/kumomta
+      # Only needed when DKIM_BACKEND=file (keys at dkim/<domain>/<selector>.key):
+      # - ../relay/dkim:/opt/kumomta/etc/dkim:ro
+      # Only needed when RELAY_TLS_CERT / RELAY_TLS_KEY are set:
+      # - ../relay/tls:/opt/kumomta/etc/tls:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+
   # Mailbox access (Go + Gluon) on :143. Opt-in until it builds.
   imap:
     profiles: ["imap"]
@@ -49,7 +68,7 @@ services:
       - redis
     restart: unless-stopped
 
-  # Shared by outbound (DKIM_BACKEND=redis) and imap. Not published.
+  # Shared by outbound and relay (DKIM_BACKEND=redis) and imap. Not published.
   redis:
     image: redis:7-alpine
     volumes:
@@ -59,5 +78,7 @@ services:
 volumes:
   kumo-spool:
   kumo-logs:
+  relay-spool:
+  relay-logs:
   imap-data:
   redis-data:
