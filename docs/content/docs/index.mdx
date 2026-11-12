@@ -1,13 +1,55 @@
 ---
-title: Hello World
-description: Your first document
+title: NodeMailServer
+description: A self-hosted mail stack that receives mail on port 25, sends it from port 587 and serves mailboxes over IMAP.
 ---
 
-Welcome to the docs! You can start writing documents in `/content/docs`.
+NodeMailServer started as a fun experiment and has grown into a small mail platform you run yourself. It receives mail for your domains, checks who sent it, accepts mail from your own apps and mail clients, and delivers it to the rest of the internet.
 
-## What is Next?
+<Callout title="Under development" type="warn">
+  Receiving and sending mail are implemented. Mailbox storage and IMAP are still being built, and some plugins are not connected to the mail pipeline yet. Each page says what is ready and what is not.
+</Callout>
+
+## What is in the box
+
+| Part | Folder | Port | What it does |
+|------|--------|------|--------------|
+| Mail server (Node + TypeScript) | `server/` | 25 and 587 | Receives mail on 25 and checks it with DKIM, SPF and DMARC. Accepts authenticated mail on 587, signs it with DKIM and queues it for delivery. |
+| Sending MTA (KumoMTA) | `outbound/` | 587 | Optional delivery engine with SMTP AUTH, per-domain rate limits, DKIM and delivery webhooks. |
+| IMAP server (Go + Gluon) | `server/imap/` | 143 | Lets mail clients read mailboxes. Work in progress. |
+| Documentation | `docs/` | 3000 | This site. |
+
+## How mail flows
+
+```
+Receiving
+  Internet ──25──▶ IncomingServer ──▶ DNS checks ──▶ DKIM / SPF / DMARC
+                                      ──▶ ARC seal ──▶ PGP encryption ──▶ store
+
+Sending
+  Mail client or app ──587 + AUTH──▶ OutgoingServer ──▶ DKIM sign ──▶ outbound queue
+                                      ──▶ recipient's MX server
+                                      ──▶ or a relay such as KumoMTA
+```
+
+## Where to start
 
 <Cards>
-  <Card title="Learn more about Next.js" href="https://nextjs.org/docs" />
-  <Card title="Learn more about Fumadocs" href="https://fumadocs.vercel.app" />
+  <Card title="Prerequisites" href="/docs/getting-started/prerequisites">
+    A domain, a static IP, reverse DNS and open ports.
+  </Card>
+  <Card title="Installation" href="/docs/getting-started/installation">
+    Run the server with Bun or Docker.
+  </Card>
+  <Card title="DNS records" href="/docs/getting-started/dns-records">
+    Generate and publish MX, SPF, DKIM and DMARC.
+  </Card>
+  <Card title="Receiving mail" href="/docs/guides/receiving-mail">
+    What happens to a message that arrives on port 25.
+  </Card>
+  <Card title="Sending mail" href="/docs/guides/sending-mail">
+    Submission on port 587, the outbound queue and retries.
+  </Card>
+  <Card title="KumoMTA" href="/docs/outbound/overview">
+    Use KumoMTA as the sending engine.
+  </Card>
 </Cards>
