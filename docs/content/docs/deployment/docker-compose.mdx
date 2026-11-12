@@ -1,0 +1,65 @@
+---
+title: Docker Compose
+description: Run the mail server, KumoMTA, IMAP and Redis together with one compose file.
+---
+
+`deploy/docker-compose.yml` runs the whole stack. Run every command from the repository root.
+
+## Start it
+
+```bash
+# 1. Configuration: copy each example and fill it in
+cp server/.env.example server/.env
+cp outbound/.env.example outbound/.env
+cp outbound/policy/users.example.lua outbound/policy/users.lua
+
+# 2. Start inbound, outbound and Redis
+docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml ps
+
+# Optional: also start IMAP (it does not build yet)
+docker compose -f deploy/docker-compose.yml --profile imap up -d
+```
+
+## Services
+
+| Service | Image | Published port | Role |
+|---------|-------|----------------|------|
+| `inbound` | Built from `server/Dockerfile` | 25 | The Node mail server. Receives mail on port 25. |
+| `outbound` | `ghcr.io/kumocorp/kumomta:latest` | 587 | KumoMTA. Accepts authenticated mail and delivers it. |
+| `imap` | Built from `server/imap/Dockerfile` | 143 | Gluon IMAP server. Only with `--profile imap`. |
+| `redis` | `redis:7-alpine` | none | Shared by KumoMTA (DKIM keys) and IMAP. Not published. |
+
+The `inbound` image runs `bun src/main.ts`, because Bun resolves the `@/` path alias that plain Node cannot.
+
+## Volumes
+
+| Volume | Mounted at | Holds |
+|--------|------------|-------|
+| `kumo-spool` | `/var/spool/kumomta` | KumoMTA's queued messages. |
+| `kumo-logs` | `/var/log/kumomta` | KumoMTA's logs. |
+| `imap-data` | `/data` | Gluon's local cache. |
+| `redis-data` | `/data` | Redis data. |
+
+`outbound/policy/` is mounted read-only at `/opt/kumomta/etc/policy`. To use file-based DKIM keys, uncomment the `outbound/dkim` mount in the compose file.
+
+## Who owns port 587
+
+Only one program can publish a host port. In this compose file:
+
+- The Node app publishes **25** and KumoMTA publishes **587**.
+- The Node app still opens 587 inside its own container, but it is not published, so nothing outside can reach it.
+
+To send through the Node app instead, publish 587 on `inbound` and remove it from `outbound`. To use KumoMTA as a relay behind the Node app, keep KumoMTA's port private and point `OUTBOUND_RELAY_HOST` at the `outbound` service. The two services share a Docker network, so `outbound` resolves by name.
+
+<Callout title="IMAP does not build yet" type="warn">
+  `server/imap/go.mod` has no requirements and its import paths do not match the folders. That is why IMAP is behind a profile. See [IMAP](/docs/imap/overview).
+</Callout>
+
+## Everyday commands
+
+```bash
+docker compose -f deploy/docker-compose.yml logs -f outbound   # follow KumoMTA's logs
+docker compose -f deploy/docker-compose.yml restart outbound   # reload policy changes
+docker compose -f deploy/docker-compose.yml down               # stop everything, keep volumes
+```
