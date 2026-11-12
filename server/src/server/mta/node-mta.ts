@@ -1,18 +1,37 @@
+import type { MxRecord } from "dns";
+import dns from "dns/promises";
 import nodemailer from "nodemailer";
-import Mail from "nodemailer/lib/mailer";
+import type Mail from "nodemailer/lib/mailer";
+import { CACHE, DELIVERY_ERROR, DSN_STATUS } from "../../config/constants";
+import { env } from "../../config/env";
+import { TtlCache } from "../../lib/helpers/TtlCache";
+import { mailWorkers } from "../../lib/workers";
 import { DNSChecker } from "../config/DnsChecker";
+import {
+	deliveryResult,
+	type SmtpFailure,
+	sendThroughTransport,
+} from "./delivery";
+import type {
+	DeliveryResult,
+	DsnOptions,
+	RawMailOptions,
+	RelayOptions,
+} from "./types";
+
+export type {
+	DeliveryResult,
+	DsnOptions,
+	RawMailOptions,
+	RelayOptions,
+} from "./types";
+
+const { getPolicy, validateMx } = require("mailauth/lib/mta-sts");
 
 export interface DkimOptions {
 	domainName: string;
 	keySelector: string;
 	privateKey: string;
-}
-
-export interface DsnOptions {
-	notify?: ("SUCCESS" | "FAILURE" | "DELAY" | "NEVER")[];
-	/** true = return headers only (HDRS), false = return full message (FULL) */
-	returnHeaders?: boolean;
-	envid?: string;
 }
 
 export interface SendMailOptions {
@@ -27,31 +46,35 @@ export interface SendMailOptions {
 	headers?: Record<string, string>;
 }
 
-export interface DeliveryResult {
-	success: boolean;
-	recipient: string;
-	response?: string;
-	error?: string;
-	dsn?: {
-		status: string;
-		action: "delivered" | "failed" | "delayed" | "relayed" | "expanded";
-		diagnosticCode?: string;
-		remoteMta?: string;
-		finalRecipient: string;
-	};
-}
-
-interface CachedMx {
+interface MxTarget {
 	host: string;
 	port: number;
-	expiresAt: number;
 }
 
-const MX_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const CONNECT_TIMEOUT_MS = 5000;
+type MxLookup =
+	| { target: MxTarget }
+	| { error: { temporary: boolean; status: string; message: string } };
+
+interface StsPolicy {
+	id: string | false;
+	mode: "enforce" | "testing" | "none";
+	mx?: string[];
+	expires?: string;
+	error?: unknown;
+}
+
+const NOT_FOUND_CODES = new Set(["ENODATA", "ENOTFOUND"]);
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
 export class NodeMailerMTA {
-	private mxCache = new Map<string, CachedMx>();
+	private mxCache = new TtlCache<string, MxTarget>(
+		CACHE.MAX_ENTRIES,
+		CACHE.MX_TTL_MS,
+	);
+	private stsCache = new TtlCache<string, StsPolicy>(
+		CACHE.MAX_ENTRIES,
+		CACHE.STS_FALLBACK_TTL_MS,
+	);
 	private static readonly PORTS = [25, 587, 465];
 
 	/**
@@ -60,55 +83,44 @@ export class NodeMailerMTA {
 	 * All recipients on the same domain share a single TCP connection.
 	 */
 	async sendMail(options: SendMailOptions): Promise<DeliveryResult[]> {
-		const grouped = this.groupByDomain(options.to);
-		const domains = Object.keys(grouped);
-
-		// Compose the RFC message once (not per domain)
-		const rawMessage = await this.composeRfcMessage(options);
-
-		// Resolve all MX servers in parallel
-		const mxEntries = await Promise.all(
-			domains.map(async (domain) => ({
-				domain,
-				mx: await this.resolveMx(domain),
-			})),
-		);
-
-		// Deliver to all domains in parallel
-		const deliveryPromises = mxEntries.map(({ domain, mx }) => {
-			const recipients = grouped[domain];
-			if (!mx) {
-				return Promise.resolve(
-					recipients.map((recipient): DeliveryResult => ({
-						success: false,
-						recipient,
-						error: `No reachable MX server found for domain ${domain}`,
-						dsn: {
-							status: "5.1.2",
-							action: "failed",
-							diagnosticCode: "No MX records or servers unreachable",
-							finalRecipient: recipient,
-						},
-					})),
-				);
-			}
-			return this.deliverToDomain(mx, rawMessage, options.from, recipients, options.dsn)
-				.catch((error: Error) =>
-					recipients.map((recipient): DeliveryResult => ({
-						success: false,
-						recipient,
-						error: error.message,
-						dsn: {
-							status: "4.0.0",
-							action: "failed",
-							diagnosticCode: error.message,
-							finalRecipient: recipient,
-						},
-					})),
-				);
+		const raw = await this.composeRfcMessage(options);
+		return this.deliverRaw({
+			from: options.from,
+			to: options.to,
+			raw,
+			dsn: options.dsn,
 		});
+	}
 
-		const settled = await Promise.all(deliveryPromises);
+	async deliverRaw({
+		from,
+		to,
+		raw,
+		dsn,
+	}: RawMailOptions): Promise<DeliveryResult[]> {
+		const settled = await Promise.all(
+			[...this.groupByDomain(to)].map(async ([domain, recipients]) => {
+				if (!domain) {
+					return deliveryResult.failAll(
+						recipients,
+						false,
+						DELIVERY_ERROR.INVALID_RECIPIENT,
+						DSN_STATUS.BAD_ADDRESS,
+					);
+				}
+				const lookup = await this.resolveMx(domain);
+				if ("error" in lookup) {
+					const { temporary, message, status } = lookup.error;
+					return deliveryResult.failAll(recipients, temporary, message, status);
+				}
+				return this.deliverToDomain(domain, lookup.target, {
+					from,
+					to: recipients,
+					raw,
+					dsn,
+				});
+			}),
+		);
 		return settled.flat();
 	}
 
@@ -118,68 +130,52 @@ export class NodeMailerMTA {
 	async sendViaRelay(
 		relayHost: string,
 		relayPort: number,
-		options: SendMailOptions & { auth?: { user: string; pass: string } },
+		options: SendMailOptions & Pick<RelayOptions, "auth" | "tls">,
 	): Promise<DeliveryResult[]> {
-		const rawMessage = await this.composeRfcMessage(options);
+		const raw = await this.composeRfcMessage(options);
+		return this.relayRaw(
+			{
+				host: relayHost,
+				port: relayPort,
+				auth: options.auth,
+				tls: options.tls,
+			},
+			{ from: options.from, to: options.to, raw, dsn: options.dsn },
+		);
+	}
+
+	async relayRaw(
+		relay: RelayOptions,
+		mail: RawMailOptions,
+	): Promise<DeliveryResult[]> {
 		const transporter = nodemailer.createTransport({
-			host: relayHost,
-			port: relayPort,
-			secure: relayPort === 465,
-			auth: options.auth,
-			tls: { rejectUnauthorized: false },
+			host: relay.host,
+			port: relay.port,
+			secure: relay.port === 465,
+			auth: relay.auth,
+			tls: {
+				rejectUnauthorized: !LOOPBACK_HOSTS.has(relay.host),
+				...relay.tls,
+			},
 		});
-
-		const envelope: Record<string, any> = {
-			from: options.from,
-			to: options.to,
-		};
-		if (options.dsn) {
-			envelope.dsn = {
-				ret: options.dsn.returnHeaders ? "HDRS" : "FULL",
-				envid: options.dsn.envid || `${Date.now()}`,
-				notify: options.dsn.notify || ["FAILURE", "DELAY"],
-				orcpt: options.to.map((r) => `rfc822;${r}`),
-			};
-		}
-
-		const results: DeliveryResult[] = [];
 		try {
-			const info = await transporter.sendMail({ envelope, raw: rawMessage });
-			for (const recipient of options.to) {
-				const accepted = info.accepted?.includes(recipient);
-				results.push({
-					success: !!accepted,
-					recipient,
-					response: info.response,
-					dsn: {
-						status: accepted ? "2.0.0" : "5.0.0",
-						action: accepted ? "delivered" : "failed",
-						remoteMta: relayHost,
-						finalRecipient: recipient,
-						diagnosticCode: info.response,
-					},
-				});
-			}
-		} catch (error: any) {
-			for (const recipient of options.to) {
-				results.push({
-					success: false,
-					recipient,
-					error: error.message,
-					dsn: {
-						status: "4.0.0",
-						action: "failed",
-						remoteMta: relayHost,
-						finalRecipient: recipient,
-						diagnosticCode: error.message,
-					},
-				});
-			}
+			return await sendThroughTransport(
+				transporter,
+				relay.host,
+				mail,
+				"relayed",
+			);
 		} finally {
 			transporter.close();
 		}
+	}
 
-		return results;
+	signRaw(
+		raw: Buffer,
+		dkim: DkimOptions,
+		envelope: { from: string; to: string[] },
+	): Promise<Buffer> {
+		return mailWorkers.dkimSign({ raw, dkim, envelope });
 	}
 
 	/**
@@ -202,113 +198,91 @@ export class NodeMailerMTA {
 			headers: options.headers,
 		};
 
-		if (options.dkim) {
-			mailOptions.dkim = {
-				domainName: options.dkim.domainName,
-				keySelector: options.dkim.keySelector,
-				privateKey: options.dkim.privateKey,
-			};
-		}
-
 		try {
 			const info = await streamTransporter.sendMail(mailOptions);
-			return info.message as Buffer;
+			const raw = info.message as Buffer;
+			return options.dkim
+				? this.signRaw(raw, options.dkim, {
+						from: options.from,
+						to: options.to,
+					})
+				: raw;
 		} finally {
 			streamTransporter.close();
 		}
 	}
 
-	/**
-	 * Deliver a pre-composed raw message to all recipients on one domain
-	 * using a single TCP connection with DSN support.
-	 */
 	private async deliverToDomain(
-		mxServer: { host: string; port: number },
-		rawMessage: Buffer,
-		from: string,
-		recipients: string[],
-		dsnOptions?: DsnOptions,
+		domain: string,
+		mx: MxTarget,
+		mail: RawMailOptions,
 	): Promise<DeliveryResult[]> {
-		const transporter = nodemailer.createTransport({
-			host: mxServer.host,
-			port: mxServer.port,
-			secure: mxServer.port === 465,
-			tls: { rejectUnauthorized: false },
-		});
-
-		const envelope: Record<string, any> = {
-			from,
-			to: recipients,
-		};
-
-		if (dsnOptions) {
-			envelope.dsn = {
-				ret: dsnOptions.returnHeaders ? "HDRS" : "FULL",
-				envid: dsnOptions.envid || `${Date.now()}`,
-				notify: dsnOptions.notify || ["FAILURE", "DELAY"],
-				orcpt: recipients.map((r) => `rfc822;${r}`),
-			};
+		const policy = await this.getStsPolicy(domain);
+		const enforce = policy.mode === "enforce";
+		if (enforce && !validateMx(mx.host, policy).valid) {
+			return deliveryResult.failAll(
+				mail.to,
+				true,
+				DELIVERY_ERROR.STS_MX_MISMATCH(mx.host, domain),
+				DSN_STATUS.STS_MX_MISMATCH,
+				mx.host,
+			);
 		}
 
-		const results: DeliveryResult[] = [];
+		const transporter = nodemailer.createTransport({
+			host: mx.host,
+			port: mx.port,
+			secure: mx.port === 465,
+			requireTLS: enforce,
+			name: env.server.outgoingHost,
+			tls: {
+				rejectUnauthorized: enforce,
+				minVersion: enforce ? "TLSv1.2" : undefined,
+			},
+		});
 		try {
-			const info = await transporter.sendMail({ envelope, raw: rawMessage });
-			for (const recipient of recipients) {
-				const accepted = info.accepted?.includes(recipient);
-				const rejected = info.rejected?.includes(recipient);
-				results.push({
-					success: !!accepted && !rejected,
-					recipient,
-					response: info.response,
-					dsn: {
-						status: accepted ? "2.0.0" : "5.0.0",
-						action: accepted ? "delivered" : "failed",
-						remoteMta: mxServer.host,
-						finalRecipient: recipient,
-						diagnosticCode: info.response,
-					},
-				});
-			}
-		} catch (error: any) {
-			for (const recipient of recipients) {
-				results.push({
-					success: false,
-					recipient,
-					error: error.message,
-					dsn: {
-						status: "4.0.0",
-						action: "failed",
-						remoteMta: mxServer.host,
-						finalRecipient: recipient,
-						diagnosticCode: error.message,
-					},
-				});
-			}
+			return await sendThroughTransport(transporter, mx.host, mail);
 		} finally {
 			transporter.close();
 		}
-
-		return results;
 	}
 
-	/**
-	 * Resolve the best reachable MX server + port for a domain.
-	 * Uses TTL-based cache to avoid repeated DNS lookups.
-	 * Probes all ports on each MX host in parallel for lower latency.
-	 */
-	private async resolveMx(domain: string): Promise<{ host: string; port: number } | null> {
+	private async resolveMx(domain: string): Promise<MxLookup> {
 		const cached = this.mxCache.get(domain);
-		if (cached && cached.expiresAt > Date.now()) {
-			return { host: cached.host, port: cached.port };
+		if (cached) return { target: cached };
+
+		let records: MxRecord[];
+		try {
+			records = await dns.resolveMx(domain);
+		} catch (error) {
+			const code = (error as SmtpFailure)?.code ?? String(error);
+			const permanent = NOT_FOUND_CODES.has(code);
+			return {
+				error: {
+					temporary: !permanent,
+					status: permanent ? DSN_STATUS.NO_MX : DSN_STATUS.DNS_FAILURE,
+					message: permanent
+						? DELIVERY_ERROR.NO_MX(domain)
+						: DELIVERY_ERROR.MX_LOOKUP_FAILED(domain, code),
+				},
+			};
 		}
-		// Evict stale entry
-		if (cached) this.mxCache.delete(domain);
 
-		const mxResult = await DNSChecker.getMXRecords(domain);
-		if (!mxResult) return null;
+		records.sort((a, b) => a.priority - b.priority);
+		if (
+			!records.length ||
+			(records.length === 1 && ["", "."].includes(records[0].exchange))
+		) {
+			return {
+				error: {
+					temporary: false,
+					status: DSN_STATUS.NULL_MX,
+					message: DELIVERY_ERROR.NULL_MX(domain),
+				},
+			};
+		}
 
-		// Try each MX host (priority-sorted), probe all ports in parallel per host
-		for (const mx of mxResult.records) {
+		for (const mx of records) {
 			const portResults = await Promise.allSettled(
 				NodeMailerMTA.PORTS.map(async (port) => {
 					const ok = await DNSChecker.tryConnect(mx.exchange, port);
@@ -316,25 +290,51 @@ export class NodeMailerMTA {
 					return port;
 				}),
 			);
-			const firstOpen = portResults.find((r) => r.status === "fulfilled") as
-				| PromiseFulfilledResult<number>
-				| undefined;
+			const firstOpen = portResults.find(
+				(r): r is PromiseFulfilledResult<number> => r.status === "fulfilled",
+			);
 			if (firstOpen) {
-				const result = { host: mx.exchange, port: firstOpen.value };
-				this.mxCache.set(domain, { ...result, expiresAt: Date.now() + MX_CACHE_TTL_MS });
-				return result;
+				const target = { host: mx.exchange, port: firstOpen.value };
+				this.mxCache.set(domain, target);
+				return { target };
 			}
 		}
 
-		return null;
+		return {
+			error: {
+				temporary: true,
+				status: DSN_STATUS.MX_UNREACHABLE,
+				message: DELIVERY_ERROR.MX_UNREACHABLE(domain),
+			},
+		};
 	}
 
-	private groupByDomain(recipients: string[]): Record<string, string[]> {
-		const groups: Record<string, string[]> = {};
+	private async getStsPolicy(domain: string): Promise<StsPolicy> {
+		const cached = this.stsCache.get(domain);
+		if (cached) return cached;
+
+		const { policy } = (await getPolicy(domain).catch((error: unknown) => ({
+			policy: { id: false, mode: "none", error },
+		}))) as { policy: StsPolicy };
+		const expiresAt = policy.expires
+			? new Date(policy.expires).getTime()
+			: Number.NaN;
+		const ttl = policy.error
+			? CACHE.STS_ERROR_TTL_MS
+			: Number.isFinite(expiresAt)
+				? Math.max(expiresAt - Date.now(), 60_000)
+				: CACHE.STS_FALLBACK_TTL_MS;
+		this.stsCache.set(domain, policy, ttl);
+		return policy;
+	}
+
+	private groupByDomain(recipients: string[]): Map<string, string[]> {
+		const groups = new Map<string, string[]>();
 		for (const email of recipients) {
-			const domain = email.split("@")[1];
-			if (!groups[domain]) groups[domain] = [];
-			groups[domain].push(email);
+			const domain = (email.split("@")[1] || "").toLowerCase();
+			const list = groups.get(domain);
+			if (list) list.push(email);
+			else groups.set(domain, [email]);
 		}
 		return groups;
 	}

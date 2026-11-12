@@ -1,5 +1,5 @@
-import { HeaderLines } from "mailparser";
-import { TemplateOptions } from "nodemailer-express-handlebars";
+import type { HeaderLines } from "mailparser";
+import type { TemplateOptions } from "nodemailer-express-handlebars";
 export interface MailDataDto {
 	message_id: string; // Unique identifier for each mail
 	from: string; // Sender email

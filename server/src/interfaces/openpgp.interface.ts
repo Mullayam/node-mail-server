@@ -1,9 +1,9 @@
 export interface PGPUserInfo {
-  email: string;
+	email: string;
 }
 
 export interface PGPKeyPair {
-  publicKey: string;
-  privateKey: string;
-  revocationCertificate?: string;
+	publicKey: string;
+	privateKey: string;
+	revocationCertificate?: string;
 }

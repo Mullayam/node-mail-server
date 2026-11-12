@@ -1,17 +1,17 @@
+import {
+	MailParser,
+	type MailParserOptions,
+	type ParsedMail,
+	type Source,
+	simpleParser,
+} from "mailparser";
 import nodemailer from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer";
-import Mail from "nodemailer/lib/mailer";
-import {
-	MailParserOptions,
-	ParsedMail,
-	simpleParser,
-	Source,
-	MailParser,
-} from "mailparser";
-import { DNSChecker } from "./DnsChecker";
+import type Mail from "nodemailer/lib/mailer";
 import { Logging } from "../../lib/logs";
+import { DNSChecker } from "./DnsChecker";
 
-export let parser = new MailParser();
+export const parser = new MailParser();
 
 export class MailConfig {
 	static composeNewMail = (options: Mail.Options): MailComposer => {
@@ -41,7 +41,7 @@ export class MailConfig {
 				if (!exchange) {
 					return null;
 				}
-				return { host: exchange, port };
+				return { host: exchange.exchange, port };
 			} catch (error) {
 				Logging.dev(`❌ Failed to connect to ${host}:${port}`, "error");
 			}

@@ -1,0 +1,98 @@
+{
+	"incoming": {
+		"maxMessageSizeBytes": 10485760,
+		"maxRecipients": 100,
+		"trustedNetworks": ["127.0.0.0/8", "::1/128"],
+		"rateLimit": {
+			"enabled": true,
+			"maxMessagesPerMinute": 100
+		},
+		"recipients": {
+			"acceptedDomains": [],
+			"knownRecipients": []
+		},
+		"checks": {
+			"disposableSender": {
+				"enabled": true
+			},
+			"senderDomain": {
+				"enabled": true,
+				"onUnroutable": "reject"
+			},
+			"reverseDns": {
+				"enabled": false,
+				"requireForwardConfirmed": true,
+				"onFail": "tag"
+			},
+			"spf": {
+				"onFail": "tag",
+				"onSoftFail": "accept",
+				"onNone": "accept",
+				"onTempError": "accept"
+			},
+			"dkim": {
+				"onFail": "tag",
+				"onNone": "accept"
+			},
+			"dmarc": {
+				"onReject": "reject",
+				"onQuarantine": "tag",
+				"honorPercentage": true
+			}
+		},
+		"arcSeal": true,
+		"pgpEncryption": true,
+		"customHeaders": {
+			"enabled": true,
+			"headers": {
+				"X-AE-Origin": "api",
+				"X-AE-Send-Type": "transactional",
+				"X-AE-Platform": "ae-mailer-v1",
+				"X-AE-Mailer": "Enjoys-Mail-Service-EMS",
+				"X-AE-Message-Channel": "email",
+				"X-AE-Abuse-Report": "abuse@yourdomain",
+				"X-AE-Region": "ap-south-1",
+				"X-Mailer": "Airsend - Powered By Enjoys"
+			}
+		}
+	},
+	"outgoing": {
+		"maxMessageSizeBytes": 10485760,
+		"maxRecipients": 100,
+		"rateLimit": {
+			"enabled": true,
+			"maxConnectionsPerMinute": null
+		},
+		"dkimSign": true,
+		"bounceHeader": {
+			"enabled": true,
+			"name": "X-AE-Bounce-Address"
+		},
+		"customHeaders": {
+			"enabled": false,
+			"headers": {}
+		}
+	},
+	"api": {
+		"enabled": true
+	},
+	"queue": {
+		"maxConcurrent": 10,
+		"maxAgeHours": 48,
+		"retryDelaysMinutes": [1, 5, 15, 30, 60, 120, 240]
+	},
+	"bounces": {
+		"notifySender": true,
+		"suppression": {
+			"enabled": true,
+			"days": 30
+		},
+		"trackingDays": 7,
+		"smtpServer": {
+			"enabled": true
+		},
+		"httpServer": {
+			"enabled": true
+		}
+	}
+}

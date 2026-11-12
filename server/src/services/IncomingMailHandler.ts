@@ -1,19 +1,28 @@
-import { MiscellaneousHelper } from "../lib/helpers";
-import { DNSChecker } from "../server/config/DnsChecker";
-import { MailConfig } from "../server/config/MailConfig";
-import { SpamFilteration } from "../server/config/SpamFilteration";
-import {
+import type {
 	SMTPServerAddress,
 	SMTPServerDataStream,
 	SMTPServerSession,
 } from "smtp-server";
-import { PGPService } from "../server/config/encryption/PGPService";
+import { HEADER } from "../config/constants";
+import { env } from "../config/env";
+import { mailConfig } from "../config/mailConfig";
+import { smtpReply } from "../config/smtpMessages";
+import { MiscellaneousHelper } from "../lib/helpers";
+import {
+	collectMessage,
+	normalizeIp,
+	RawMessage,
+} from "../lib/helpers/RawMessage";
+import { toSmtpError } from "../lib/helpers/smtpErrors";
+import { Logging } from "../lib/logs";
+import { mailWorkers } from "../lib/workers";
 import { RFC5322MailComposer } from "../server/config/MailComposer";
-import { MailAuth } from "../server/config/MailAuth";
+import { getMailRuntime } from "../server/mta/runtime";
+import { DsnProcessor } from "./bounce/DsnProcessor";
+import { IncomingPolicy } from "./IncomingPolicy";
 
-const regex = /^[^\s@]+\.temp@[^\s@]+\.[^\s@]+$/;
-
-const pgp = new PGPService()
+let pgpWarningShown = false;
+let arcWarningShown = false;
 
 class IncomingMailHandler {
 	async HandleMailFrom(
@@ -22,18 +31,13 @@ class IncomingMailHandler {
 		callback: (err?: Error | null | undefined) => void,
 	): Promise<void> {
 		try {
-			const mailFrom =
-				MiscellaneousHelper.extractEmail(address.address) || address.address;
-
-			if (mailFrom.match(regex)) {
-				return callback(new Error("The email address you used is invalid"));
+			const rejection = await IncomingPolicy.checkSender(address, session);
+			if (rejection) {
+				return callback(rejection);
 			}
 			return callback(); // Accept the address
-		} catch (error: any) {
-			if (error instanceof Error) {
-				return callback(new Error(error.message));
-			}
-			return callback(null);
+		} catch (error) {
+			return callback(toSmtpError(error, "MAIL FROM failed"));
 		}
 	}
 	async HandleRcptTo(
@@ -42,7 +46,6 @@ class IncomingMailHandler {
 		callback: (err?: Error | null | undefined) => void,
 	): Promise<void> {
 		try {
-			let message = "";
 			/** NOTE :
 			 * Check the RCPT TO address is exist or not in your System
 			 * Check the DNS records like MX, SPF, DMARC, TXT of the Sender and validate them and based on them allow or reject the email
@@ -50,67 +53,30 @@ class IncomingMailHandler {
 			 * Store All Logs in Database, Redis etc
 			 */
 
-			if (session.envelope && session.envelope.mailFrom) {
-				const receiverMail =
-					MiscellaneousHelper.extractEmail(address.address) || address.address;
-				const receiverDomain = receiverMail.split("@")[1];
-				const mailFrom =
-					MiscellaneousHelper.extractEmail(session.envelope.mailFrom.address) ||
-					session.envelope.mailFrom.address;
-				const mailFromDomain = mailFrom.split("@")[1];
-
-				const { mxRecords, spfRecords, dmarcRecords, txtRecords } =
-					await DNSChecker.resolveRecords(mailFromDomain);
-
-				// Check for MX record
-				if (mxRecords.length === 0) {
-					message = `No MX records found for domain ${mailFromDomain}. Rejecting the email.`;
-
-					return callback(new Error(message));
-				}
-				message = `MX record check passed localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${mailFrom} to ${receiverMail}`;
-
-				// Check for SPF record
-				const spfRecord = spfRecords.find((record: string[]) =>
-					record.join(" ").toUpperCase().includes("SPF"),
-				);
-				if (!spfRecord) {
-					message = `No SPF record found for domain ${mailFromDomain}.SPF record not passed,  Rejecting the email.`;
-
-					return callback(new Error(message));
-				}
-				message = `SPF record passed ,localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${mailFrom} to ${receiverMail}`;
-
-				if (dmarcRecords.length === 0) {
-					message = `No DMARC record found for domain ${mailFromDomain}. DMARC record not passed, Forwarding to Spam Folder`;
-					// TODO: Flag this email for spam folder delivery
-				} else {
-					message = `DMARC record passed, localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${mailFrom} to ${receiverMail}, `;
-				}
-
-				// Check for TXT record
-
-				if (txtRecords.length === 0) {
-					message = `No TXT records found for domain ${mailFromDomain}. Forwarding to Spam Folder`;
-					// TODO: Flag this email for spam folder delivery
-				} else {
-					message = `TXT record passed, localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${mailFrom} to ${receiverMail}`;
-				}
-
-				message = `Incoming mail accepted  localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort},  from = ${mailFrom} to ${receiverMail}`;
-				console.log(message);
-
-				// Dont Forget to check the RCPT TO domain is exist or not in your System
-
-				return callback(null);
+			const isBounce = getMailRuntime().bounces.isBounceAddress(
+				address.address,
+			);
+			const rejection = IncomingPolicy.checkRecipient(
+				address,
+				session,
+				isBounce,
+			);
+			if (rejection) {
+				return callback(rejection);
 			}
+
+			const mailFrom = session.envelope.mailFrom
+				? session.envelope.mailFrom.address
+				: "";
+			const receiverMail =
+				MiscellaneousHelper.extractEmail(address.address) || address.address;
+			Logging.dev(
+				`Incoming mail accepted localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${mailFrom || "<>"} to ${receiverMail}`,
+			);
 
 			return callback(null);
 		} catch (error) {
-			if (error instanceof Error) {
-				return callback(new Error(error.message));
-			}
-			return callback(null);
+			return callback(toSmtpError(error, "RCPT TO failed"));
 		}
 	}
 	async HandleNewMail(
@@ -118,121 +84,144 @@ class IncomingMailHandler {
 		session: SMTPServerSession,
 		callback: (err?: Error | null | undefined, message?: string) => void,
 	): Promise<void> {
-		let mailchunks = "";
-		stream.on("data", (chunk) => (mailchunks += chunk.toString()));
-		stream.on("error", (err) => callback(new Error(err.message)));
-		stream.on("end", async () => {
-			try {
-				const parsedEmailData = await MailConfig.ParseEmail(mailchunks);
-
-				// Extract sender info from parsed email for authentication
-				const senderAddress = parsedEmailData.from?.value?.[0]?.address || (session.envelope?.mailFrom && session.envelope.mailFrom.address) || "";
-				const senderDomain = senderAddress.split("@")[1] || "";
-
-				// Run DKIM, SPF, DMARC checks in parallel on the ORIGINAL message (before header modification)
-				const mailAuth = new MailAuth(mailchunks, senderAddress, senderDomain);
-				const [dkimResult, spf, dmarc] = await Promise.all([
-					mailAuth.dkimCheck(),
-					mailAuth.getSpfCheckAll(),
-					mailAuth.getDmarcRecord(),
-				]);
-
-				// Evaluate DKIM result
-				const dkimPass = dkimResult.results?.some((r) => r.status?.result === "pass");
-				if (!dkimPass) {
-					console.warn(`DKIM check failed for ${senderAddress}`);
-				}
-
-				// Evaluate SPF result
-				const spfPass = spf?.some((r) => r.info?.toLowerCase().includes("pass"));
-				if (!spfPass) {
-					console.warn(`SPF check failed for ${senderAddress}`);
-				}
-
-				// Evaluate DMARC policy
-				if (dmarc?.p === "reject" && (!dkimPass || !spfPass)) {
-					return callback(new Error(`Email rejected: DMARC policy is 'reject' and authentication failed for ${senderDomain}`));
-				}
-
-				// Now attach custom headers AFTER authentication (so DKIM verification isn't broken)
-				const newHeaders = RFC5322MailComposer.createRfc822Headers({
-					"X-AE-Receipt-Time": `${Date.now()}`,
-					"X-AE-Origin": "api",
-					"X-AE-Send-Type": "transactional",
-					"X-AE-Platform": "ae-mailer-v1",
-					"X-AE-Mailer": "Enjoys-Mail-Service-EMS",
-					"X-AE-Message-Channel": "email",
-					"X-AE-Abuse-Report": "abuse@yourdomain",
-					"X-AE-Region": "ap-south-1",
-					"X-Mailer": "Airsend - Powered By Enjoys",
-				});
-				mailchunks = newHeaders + mailchunks;
-
-				// If forwarding, seal the message with ARC headers
-				const result = await mailAuth.sealMessage(true, {
-					headers: {},
-				});
-				let sealedHeaders: string | null = null;
-				if (result) {
-					sealedHeaders = result.headers;
-				}
-				const rawEmail = sealedHeaders ? sealedHeaders + "\r\n" + mailchunks : mailchunks;
-
-				// Encrypt and store
-				const pgpPassphrase = process.env.PGP_PASSPHRASE || "";
-				const encrypted = await pgp.encryptMessage(rawEmail, {
-					privateKey: process.env.PGP_PRIVATE_KEY || "",
-					publicKey: process.env.PGP_PUBLIC_KEY || "",
-					revocationCertificate: process.env.PGP_REVOCATION_CERTIFICATE || ""
-				}, pgpPassphrase);
-				// Store the encrypted message in database or forward as needed
-				console.log("Encrypted Message: ", encrypted);
-				/** NOTE :
-				 * CHECK FOR TXT RECORD i.e DKIM
-				 *  Check for DKIM signature
-				 *  Extract DKIM-Signature Header from the Email.
-				 *  new SpamFilteration().verifyDkimSignature(parsedEmailData.headerLines, parsedEmailData.dkimSignature);
-				 *  Map HeaderLines according to requirement of function
-				 *  Verify the DKIM signature and reject the email if not valid, forward to spam folder
-				 */
-
-				// Do something with the parsed email data (e.g., save to database,  etc.)
-				// Spam Filtering
-				// Forwarding to Other Mail Servers
-				// Auto-Responders
-				// Webhooks
-				// Real-time Notifications
-				// Integration with Other Services
-				// Archiving
-				// Backup
-				// Email Parsing and Extraction
-				// Custom Business Logic
-				// Email Categorization and Tagging
-				// User Preferences and Settings
-				// Throttling and Rate Limiting
-				// Security Measures (e.g., Virus Scanning, Malware Detection)
-				// Compliance (e.g., GDPR, HIPAA)
-				// Multi-Tenancy Support
-				// API Integration for Developers
-				// UI for Managing Emails and Settings
-				// Reporting and Analytics
-				// Scheduling (e.g., Delayed Delivery)
-				// Load Balancing and Scalability
-				// Storing in Database
-				// Storing Attachments in Cloud Storage or Local Storage
-				// Notifications
-				// Logging
-				// Monitoring
-				// Alerting
-				// Testing and Debugging Tools
-				// Documentation for Users and Developers
-				// Custom Headers
-				 
-				return callback(null, "250 Message accepted");
-			} catch (error: any) {
-				return callback(new Error(error.message));
+		try {
+			const config = mailConfig.get().incoming;
+			const original = await collectMessage(stream, config.maxMessageSizeBytes);
+			if (!original) {
+				return callback(
+					smtpReply("MESSAGE_TOO_LARGE", {
+						maxSize: config.maxMessageSizeBytes,
+					}).toError(),
+				);
 			}
-		});
+
+			const { bounces } = getMailRuntime();
+			const recipients = session.envelope.rcptTo.map((r) => r.address);
+			const bounceRecipients = recipients.filter((r) =>
+				bounces.isBounceAddress(r),
+			);
+			if (bounceRecipients.length) {
+				await bounces.handleIncomingBounce(original, bounceRecipients);
+				if (bounceRecipients.length === recipients.length) {
+					return callback(null, smtpReply("BOUNCE_ACCEPTED").text);
+				}
+			} else if (DsnProcessor.isDeliveryReport(original)) {
+				await bounces
+					.handleDeliveryReport(original)
+					.catch((error) =>
+						Logging.dev(`Delivery report processing failed: ${error}`, "error"),
+					);
+			}
+
+			const sender = session.envelope.mailFrom
+				? session.envelope.mailFrom.address
+				: "";
+			const receivingHost = env.server.incomingHost;
+			const auth = await mailWorkers.authenticate({
+				raw: original,
+				ip: normalizeIp(session.remoteAddress),
+				helo: session.hostNameAppearsAs,
+				mta: receivingHost,
+				sender,
+				seal: config.arcSeal,
+			});
+			if (auth.sealError && !arcWarningShown) {
+				arcWarningShown = true;
+				Logging.dev(auth.sealError, "error");
+			}
+
+			const verdict = IncomingPolicy.evaluateAuthentication(
+				auth,
+				session,
+				(sender.split("@")[1] || "").toLowerCase(),
+			);
+			if (verdict.error) {
+				return callback(verdict.error);
+			}
+
+			const cleaned = RawMessage.stripHeaders(
+				original,
+				(name, value) =>
+					/^x-ae-/i.test(name) ||
+					(name.toLowerCase() === "authentication-results" &&
+						value.trim().toLowerCase().startsWith(receivingHost.toLowerCase())),
+			);
+			const newHeaders = config.customHeaders.enabled
+				? RFC5322MailComposer.createRfc822Headers({
+						[HEADER.RECEIPT_TIME]: `${Date.now()}`,
+						...config.customHeaders.headers,
+					})
+				: "";
+			const rawEmail = RawMessage.prependHeaders(
+				cleaned,
+				auth.headers + IncomingPolicy.policyHeaders(verdict.flags) + newHeaders,
+			);
+
+			// Encrypt and store
+			const { privateKey, publicKey, passphrase } = env.pgp;
+			if (config.pgpEncryption && privateKey && publicKey) {
+				const encrypted = await mailWorkers.pgpEncrypt({
+					text: rawEmail.toString(),
+					privateKey,
+					publicKey,
+					passphrase,
+				});
+				// Store the encrypted message in database or forward as needed
+				Logging.dev(
+					`Encrypted incoming message from ${sender || "<>"}: ${Buffer.byteLength(encrypted)} bytes`,
+				);
+			} else if (config.pgpEncryption && !pgpWarningShown) {
+				pgpWarningShown = true;
+				Logging.dev(
+					"PGP keys are not configured, incoming mail is not encrypted at rest",
+					"notice",
+				);
+			}
+			/** NOTE :
+			 * CHECK FOR TXT RECORD i.e DKIM
+			 *  Check for DKIM signature
+			 *  Extract DKIM-Signature Header from the Email.
+			 *  new SpamFilteration().verifyDkimSignature(parsedEmailData.headerLines, parsedEmailData.dkimSignature);
+			 *  Map HeaderLines according to requirement of function
+			 *  Verify the DKIM signature and reject the email if not valid, forward to spam folder
+			 */
+
+			// Do something with the parsed email data (e.g., save to database,  etc.)
+			// Spam Filtering
+			// Forwarding to Other Mail Servers
+			// Auto-Responders
+			// Webhooks
+			// Real-time Notifications
+			// Integration with Other Services
+			// Archiving
+			// Backup
+			// Email Parsing and Extraction
+			// Custom Business Logic
+			// Email Categorization and Tagging
+			// User Preferences and Settings
+			// Throttling and Rate Limiting
+			// Security Measures (e.g., Virus Scanning, Malware Detection)
+			// Compliance (e.g., GDPR, HIPAA)
+			// Multi-Tenancy Support
+			// API Integration for Developers
+			// UI for Managing Emails and Settings
+			// Reporting and Analytics
+			// Scheduling (e.g., Delayed Delivery)
+			// Load Balancing and Scalability
+			// Storing in Database
+			// Storing Attachments in Cloud Storage or Local Storage
+			// Notifications
+			// Logging
+			// Monitoring
+			// Alerting
+			// Testing and Debugging Tools
+			// Documentation for Users and Developers
+			// Custom Headers
+
+			return callback(null, smtpReply("MESSAGE_ACCEPTED").text);
+		} catch (error) {
+			return callback(toSmtpError(error, "Incoming message failed"));
+		}
 	}
 }
 export const NewMailHandler = new IncomingMailHandler();

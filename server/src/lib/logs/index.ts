@@ -1,5 +1,6 @@
 import { bold, greenBright, magenta, red, white, yellow } from "colorette";
 import moment from "moment";
+
 type LoggingLevel = "info" | "error" | "debug" | "alert" | "notice";
 
 class Logger {
@@ -13,7 +14,8 @@ class Logger {
 		);
 	}
 	setName(name: string) {
-		return (Logger.appName = name);
+		Logger.appName = name;
+		return name;
 	}
 
 	/**
@@ -40,12 +42,11 @@ class Logger {
 			);
 		}
 		if (type === "debug") {
-			console.log(
+			return console.log(
 				bold(
 					`[${Logger.appName}] ${process.pid} - ${white(moment().format("DD/MM/YYYY hh:mm:ss A"))}, [${(type).toUpperCase()}] ${text}`,
 				),
 			);
-			return process.exit(1);
 		}
 		if (type === "alert") {
 			console.log(
@@ -73,4 +74,5 @@ class Logger {
 }
 
 const Logging = new Logger();
+
 export { Logging };

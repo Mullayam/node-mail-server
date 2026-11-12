@@ -1,9 +1,12 @@
-import "dotenv/config";
+import "./config/env";
 import "reflect-metadata";
 import { SMTP_SERVICE } from "./server";
 
-function main() {
-	SMTP_SERVICE.Initialize();
+async function main() {
+	await SMTP_SERVICE.Initialize();
 }
 
-export default main();
+export default main().catch((error) => {
+	console.error(error);
+	process.exit(1);
+});

@@ -1,9 +1,10 @@
-import {
+import crypto from "crypto";
+import dns from "dns/promises";
+import { env } from "../../config/env";
+import type {
 	DNSRecordType,
 	RecordTypeRespose,
 } from "../../interfaces/dns.interface";
-import crypto from "crypto";
-import dns from "dns/promises";
 
 export class DNSRecordGenerator {
 	private domain: string;
@@ -30,7 +31,7 @@ export class DNSRecordGenerator {
 
 	constructor(domain: string, dkimSelector: string = "default") {
 		this.domain = domain;
-		this.mailServer = process.env.INCOMING_MAIL_HOST;
+		this.mailServer = env.server.incomingHost;
 		this.dkimSelector = dkimSelector;
 	}
 	private formatDkimPublicKey(publicKey: string): string {
@@ -98,9 +99,9 @@ export class DNSRecordGenerator {
 	 */
 	async generateSPF() {
 		let spfRecord = "v=spf1";
-		if (this.isIPAddress(process.env.MAIL_SERVER_IP as string)) {
-			spfRecord += ` a mx ip4:${process.env.MAIL_SERVER_IP}`;
-		}else{
+		if (this.isIPAddress(env.server.serverIp ?? "")) {
+			spfRecord += ` a mx ip4:${env.server.serverIp}`;
+		} else {
 			try {
 				await dns.lookup(this.mailServer).then(({ address }) => {
 					spfRecord += ` a mx ip4:${address}`;
@@ -109,7 +110,6 @@ export class DNSRecordGenerator {
 				spfRecord += ` include:${this.mailServer}`;
 			}
 		}
-	
 
 		spfRecord += " ~all";
 		return this.formatRecords("TXT", this.domain, spfRecord);

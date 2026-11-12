@@ -1,23 +1,24 @@
-import { SMTPServer, SMTPServerOptions } from "smtp-server";
-import { NewOutgoingMailHandler } from "../services/OutgoingMailHandler";
-
-import { Logging } from "../lib/logs";
 import { white } from "colorette";
 import { readFileSync } from "fs";
+import { SMTPServer, type SMTPServerOptions } from "smtp-server";
+import { DEFAULTS } from "../config/constants";
+import { env } from "../config/env";
+import { mailConfig } from "../config/mailConfig";
+import { smtpReply } from "../config/smtpMessages";
+import { toSmtpError } from "../lib/helpers/smtpErrors";
+import { Logging } from "../lib/logs";
+import { NewOutgoingMailHandler } from "../services/OutgoingMailHandler";
 import { SpamFilteration } from "./config/SpamFilteration";
 
 // Make Sure to use TLS
 // const options = {
-//     key: readFileSync(process.env.TLS_PRIVATE_KEY_PATH as string,"utf8"),
-//     cert: readFileSync(process.env.TLS_CERTFICATE_PATH as string,"utf8")
+//     key: readFileSync(env.tls.privateKeyPath as string,"utf8"),
+//     cert: readFileSync(env.tls.certificatePath as string,"utf8")
 // }
 
 export class OutgoingServerConfig {
-	private readonly MAX_EMAILS_PER_MINUTE =
-		Number(process.env.MAX_EMAILS_PER_MINUTE) || 5;
-
 	constructor(private host: string) {}
-	private OUTGOING_SERVER_PORT = 587;
+	private OUTGOING_SERVER_PORT = DEFAULTS.SMTP_PORT_OUTGOING;
 	private getOptions(handlers: SMTPServerOptions): SMTPServerOptions {
 		return {
 			allowInsecureAuth: false,
@@ -27,21 +28,28 @@ export class OutgoingServerConfig {
 			//Enable TLS
 			// key: options.key,
 			// cert:options.cert,
-			banner: `220 ${this.host} ESMTP NodeSMTP Server is Ready`,
+			banner: smtpReply("GREETING", { host: this.host }).message,
 			disabledCommands: [""],
 			authMethods: ["PLAIN", "LOGIN", "CRAM-MD5"],
-			size: 10 * 1024 * 1024,
+			size: mailConfig.get().outgoing.maxMessageSizeBytes,
 			disableReverseLookup: true,
 			useXClient: false,
-			hidePIPELINING: true,
 			needsUpgrade: false,
-			authOptional: true,
+			authOptional: true, // use authOptional to allow unauthenticated for relay, but still support authentication if provided
 			useProxy: false,
 			handshakeTimeout: 60000,
 			socketTimeout: 60000, // Increase socket timeout to 60 seconds
 			closeTimeout: 60000, // Increase connection timeout to 60 seconds
 			maxClients: 1000,
 			enableTrace: true,
+			hideDSN: true,
+			hideREQUIRETLS: true,
+			hideENHANCEDSTATUSCODES: true,
+			hidePIPELINING: true,
+			hideSTARTTLS: true,
+			hideSize: true,
+			hide8BITMIME: true,
+			hideSMTPUTF8: true,
 			...handlers,
 		};
 	}
@@ -52,17 +60,22 @@ export class OutgoingServerConfig {
 		server.on("close", () => Logging.dev("incoming Mail Server closed"));
 	}
 	private outgoingHandlers(): SMTPServerOptions {
-		const self = this;
 		return {
 			async onConnect(session, callback) {
 				try {
-					await SpamFilteration.checkBlackListIp(
-						session.remoteAddress,
-						self.MAX_EMAILS_PER_MINUTE,
-					);
+					const { rateLimit } = mailConfig.get().outgoing;
+					if (rateLimit.enabled) {
+						await SpamFilteration.checkBlackListIp(
+							session.remoteAddress,
+							rateLimit.maxConnectionsPerMinute ??
+								env.server.maxEmailsPerMinute,
+						);
+					}
 					return callback(null);
-				} catch (error: any) {
-					return callback(error.message);
+				} catch (error) {
+					return callback(
+						toSmtpError(error, "Outgoing connection check failed"),
+					);
 				}
 			},
 			onClose(session, callback) {},
@@ -89,13 +102,17 @@ export class OutgoingServerConfig {
 		};
 	}
 	public start() {
-		const options = this.getOptions(this.outgoingHandlers());
+		const options = this.getOptions({
+			authOptional: false,
+			...this.outgoingHandlers(),
+		});
 		const server = new SMTPServer(options);
 		this.eventListener(server);
 		server.listen(this.OUTGOING_SERVER_PORT);
 		Logging.dev(
-			white(				 
-				`Outgoing Mail Server started Host: ${this.host} Port: ` + this.OUTGOING_SERVER_PORT,
+			white(
+				`Outgoing Mail Server started Host: ${this.host} Port: ` +
+					this.OUTGOING_SERVER_PORT,
 			),
 		);
 		return server;

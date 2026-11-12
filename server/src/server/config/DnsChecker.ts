@@ -1,10 +1,21 @@
-import { MxRecord } from "dns";
-import { DNSRecordType, DNSResponse } from "../../interfaces/dns.interface";
+import type { MxRecord } from "dns";
 import dns from "dns/promises";
 import moment from "moment";
 import net from "net";
+import type {
+	DNSRecordType,
+	DNSResponse,
+	SenderDomainRecords,
+} from "../../interfaces/dns.interface";
+import { TtlCache } from "../../lib/helpers/TtlCache";
+
+const NOT_FOUND_CODES = new Set(["ENODATA", "ENOTFOUND"]);
 
 export class DNSChecker {
+	private static recordsCache = new TtlCache<string, SenderDomainRecords>(
+		10_000,
+		5 * 60 * 1000,
+	);
 	private domain: string;
 	private dkimSelector: string;
 
@@ -16,55 +27,75 @@ export class DNSChecker {
 		this.dkimSelector = dkimSelector;
 	}
 	/**
-   * Resolves the DNS records for a given hostname using DNS over HTTPS.
-   * @param hostname - The hostname to resolve.
-   * @returns A promise that resolves to an array of IP addresses as strings.
-   */
-  static async resolveIP(hostname: string): Promise<string[]> {
-    try {
-
-      return dns.resolve4(hostname);
-    } catch (error) {
-      console.error(`❌ Failed to fetch IP addresses for ${hostname}:`, error);
-      return [];
-    }
-  }
-	 static async getMXRecords(domain: string): Promise<{ exchange: string, records: MxRecord[] } | null> {
-    try {
-      const records = await dns.resolveMx(domain);
-      records.sort((a, b) => a.priority - b.priority); // Sort by priority
-      return { exchange: records[0].exchange, records }; // Return primary mail server
-    } catch (error) {
-      console.error(`❌ Failed to fetch MX records for ${domain}:`, error);
-      return null;
-    }
-  }
+	 * Resolves the DNS records for a given hostname using DNS over HTTPS.
+	 * @param hostname - The hostname to resolve.
+	 * @returns A promise that resolves to an array of IP addresses as strings.
+	 */
+	static async resolveIP(hostname: string): Promise<string[]> {
+		try {
+			return await dns.resolve4(hostname);
+		} catch (error) {
+			console.error(`❌ Failed to fetch IP addresses for ${hostname}:`, error);
+			return [];
+		}
+	}
+	static async getMXRecords(
+		domain: string,
+	): Promise<{ exchange: string; records: MxRecord[] } | null> {
+		try {
+			const records = await dns.resolveMx(domain);
+			records.sort((a, b) => a.priority - b.priority); // Sort by priority
+			return { exchange: records[0].exchange, records }; // Return primary mail server
+		} catch (error) {
+			console.error(`❌ Failed to fetch MX records for ${domain}:`, error);
+			return null;
+		}
+	}
 
 	/**
 	 * Resolves the DNS records for a given hostname using DNS over HTTPS.
 	 * @param hostname - The hostname to resolve.
 	 * @returns A promise that resolves to an array of IP addresses as strings.
 	 */
-	static async resolveRecords(domain: string): Promise<any> {
-		try {
-			const mxRecords = await dns.resolveMx(domain);
-			const spfRecords = await dns.resolveTxt(domain);
-			const dmarcRecords = await dns.resolveTxt("_dmarc." + domain);
-			const txtRecords = await dns.resolveTxt(domain);
-			const nsRecords = await dns.resolveNs(domain);
-			// const srvRecords = await dns.resolveSrv(domain);
-			const validDomain = /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(domain);
-			return {
-				mxRecords,
-				spfRecords,
-				dmarcRecords,
-				txtRecords,
-				validDomain,
-				nsRecords,
-			};
-		} catch (error) {
-			console.log(error);
-		}
+	static async resolveRecords(domain: string): Promise<SenderDomainRecords> {
+		const key = domain.toLowerCase();
+		const cached = DNSChecker.recordsCache.get(key);
+		if (cached) return cached;
+
+		let temporaryFailure = false;
+		const recordsOf = <T>(result: PromiseSettledResult<T[]>): T[] => {
+			if (result.status === "fulfilled") return result.value;
+			if (!NOT_FOUND_CODES.has(result.reason?.code)) temporaryFailure = true;
+			return [];
+		};
+
+		const [mx, txt, dmarc, ns] = await Promise.allSettled([
+			dns.resolveMx(key),
+			dns.resolveTxt(key),
+			dns.resolveTxt(`_dmarc.${key}`),
+			dns.resolveNs(key),
+		]);
+		const mxRecords = recordsOf(mx);
+		const txtRecords = recordsOf(txt);
+		const [a, aaaa] = mxRecords.length
+			? []
+			: await Promise.allSettled([dns.resolve4(key), dns.resolve6(key)]);
+
+		const records: SenderDomainRecords = {
+			mxRecords,
+			txtRecords,
+			spfRecords: txtRecords.filter((r) =>
+				r.join("").toLowerCase().startsWith("v=spf1"),
+			),
+			dmarcRecords: recordsOf(dmarc),
+			nsRecords: recordsOf(ns),
+			aRecords: a ? recordsOf(a) : [],
+			aaaaRecords: aaaa ? recordsOf(aaaa) : [],
+			validDomain: /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(key),
+			temporaryFailure,
+		};
+		if (!temporaryFailure) DNSChecker.recordsCache.set(key, records);
+		return records;
 	}
 	static resolveDNS(
 		hostname: string,
@@ -89,7 +120,7 @@ export class DNSChecker {
 		hostname: string,
 		type: DNSRecordType = "A",
 	): Promise<boolean> {
-		return this.resolveDNS(hostname, type).then(
+		return DNSChecker.resolveDNS(hostname, type).then(
 			(result) => result.Answer.length > 0,
 		);
 	}

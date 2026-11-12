@@ -1,0 +1,177 @@
+{
+	"GREETING": {
+		"code": 220,
+		"status": "2.0.0",
+		"message": "NodeSMTP Server is Ready"
+	},
+	"BOUNCE_GREETING": {
+		"code": 220,
+		"status": "2.0.0",
+		"message": "Bounce processor ready"
+	},
+	"MESSAGE_ACCEPTED": {
+		"code": 250,
+		"status": "2.0.0",
+		"message": "Message accepted"
+	},
+	"MESSAGE_QUEUED": {
+		"code": 250,
+		"status": "2.0.0",
+		"message": "Message queued as {id}"
+	},
+	"BOUNCE_ACCEPTED": {
+		"code": 250,
+		"status": "2.0.0",
+		"message": "Bounce accepted"
+	},
+	"SERVICE_UNAVAILABLE": {
+		"code": 421,
+		"status": "4.3.2",
+		"message": "Service not available, closing transmission channel"
+	},
+	"RATE_LIMITED": {
+		"code": 421,
+		"status": "4.7.0",
+		"message": "Too many requests from {ip}, try again in {seconds} seconds"
+	},
+	"MAILBOX_BUSY": {
+		"code": 450,
+		"status": "4.2.1",
+		"message": "Mailbox {recipient} is temporarily unavailable, try again later"
+	},
+	"REVERSE_DNS_TEMPFAIL": {
+		"code": 450,
+		"status": "4.7.25",
+		"message": "Reverse DNS lookup for {ip} failed, try again later"
+	},
+	"INTERNAL_ERROR": {
+		"code": 451,
+		"status": "4.3.0",
+		"message": "Temporary server error, try again later"
+	},
+	"SERVER_BUSY": {
+		"code": 451,
+		"status": "4.3.2",
+		"message": "Server is busy, try again later"
+	},
+	"DNS_TEMPORARY_FAILURE": {
+		"code": 451,
+		"status": "4.4.3",
+		"message": "Temporary DNS failure for {domain}, try again later"
+	},
+	"SENDER_DOMAIN_TEMPFAIL": {
+		"code": 451,
+		"status": "4.1.8",
+		"message": "Sender domain {domain} cannot be verified right now, try again later"
+	},
+	"SPF_TEMPFAIL": {
+		"code": 451,
+		"status": "4.7.24",
+		"message": "SPF check for {domain} failed temporarily, try again later"
+	},
+	"DKIM_TEMPFAIL": {
+		"code": 451,
+		"status": "4.7.20",
+		"message": "DKIM check failed temporarily, try again later"
+	},
+	"DMARC_TEMPFAIL": {
+		"code": 451,
+		"status": "4.7.26",
+		"message": "DMARC check for {domain} failed temporarily, try again later"
+	},
+	"INSUFFICIENT_STORAGE": {
+		"code": 452,
+		"status": "4.3.1",
+		"message": "Insufficient system storage, try again later"
+	},
+	"MAILBOX_FULL_TEMPORARY": {
+		"code": 452,
+		"status": "4.2.2",
+		"message": "Mailbox {recipient} is full, try again later"
+	},
+	"TOO_MANY_RECIPIENTS": {
+		"code": 452,
+		"status": "4.5.3",
+		"message": "Too many recipients, the limit is {max}"
+	},
+	"AUTH_METHOD_NOT_ALLOWED": {
+		"code": 504,
+		"status": "5.5.4",
+		"message": "XOAUTH2 is not allowed, use PLAIN or LOGIN"
+	},
+	"AUTH_FAILED": {
+		"code": 535,
+		"status": "5.7.8",
+		"message": "Invalid username or password"
+	},
+	"USER_NOT_FOUND": {
+		"code": 550,
+		"status": "5.1.1",
+		"message": "User {recipient} does not exist"
+	},
+	"UNKNOWN_BOUNCE_ADDRESS": {
+		"code": 550,
+		"status": "5.1.1",
+		"message": "Unknown bounce address {recipient}"
+	},
+	"INVALID_SENDER": {
+		"code": 550,
+		"status": "5.1.7",
+		"message": "Invalid sender address"
+	},
+	"DISPOSABLE_SENDER": {
+		"code": 550,
+		"status": "5.1.7",
+		"message": "The email address you used is invalid"
+	},
+	"SENDER_DOMAIN_UNROUTABLE": {
+		"code": 550,
+		"status": "5.1.8",
+		"message": "Sender domain {domain} does not exist or cannot receive mail"
+	},
+	"MAILBOX_DISABLED": {
+		"code": 550,
+		"status": "5.2.1",
+		"message": "Mailbox {recipient} is disabled"
+	},
+	"RELAY_DENIED": {
+		"code": 550,
+		"status": "5.7.1",
+		"message": "Relaying to {recipient} is not allowed"
+	},
+	"DKIM_FAILED": {
+		"code": 550,
+		"status": "5.7.20",
+		"message": "No passing DKIM signature found"
+	},
+	"SPF_FAILED": {
+		"code": 550,
+		"status": "5.7.23",
+		"message": "SPF validation failed for {domain}"
+	},
+	"REVERSE_DNS_FAILED": {
+		"code": 550,
+		"status": "5.7.25",
+		"message": "Reverse DNS validation failed for {ip}"
+	},
+	"DMARC_REJECT": {
+		"code": 550,
+		"status": "5.7.26",
+		"message": "Email rejected per DMARC policy of {domain}"
+	},
+	"MAILBOX_FULL": {
+		"code": 552,
+		"status": "5.2.2",
+		"message": "Mailbox {recipient} is full"
+	},
+	"MESSAGE_TOO_LARGE": {
+		"code": 552,
+		"status": "5.3.4",
+		"message": "Message exceeds the maximum size of {maxSize} bytes"
+	},
+	"NO_VALID_RECIPIENTS": {
+		"code": 554,
+		"status": "5.5.1",
+		"message": "No valid recipients"
+	}
+}

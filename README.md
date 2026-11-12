@@ -121,16 +121,18 @@ const results = await mta.sendViaRelay("smtp.relay.com", 587, {
 
 When an email arrives on port 25:
 
-1. **MAIL FROM** — Validates sender address format, rejects `.temp@` addresses
-2. **RCPT TO** — Resolves sender domain DNS (MX, SPF, DMARC, TXT), rejects if MX or SPF records missing
-3. **DATA** — Full email processing:
-   - Parses raw email with `mailparser`
-   - Extracts sender from parsed headers (falls back to envelope)
-   - Runs **DKIM, SPF, DMARC** checks **in parallel** on the original unmodified message
-   - Rejects if DMARC policy is `reject` and authentication fails
-   - Attaches custom `X-AE-*` headers **after** authentication (preserves DKIM signatures)
-   - Seals with ARC headers (for forwarding scenarios)
-   - Encrypts the final message with PGP for at-rest storage
+1. **Connect** — Optional reverse DNS check (`checks.reverseDns`)
+2. **MAIL FROM** — Rate limit per IP (temporary `421` when exceeded), rejects `.temp@` addresses, checks the sender domain has an MX, A or AAAA record (`checks.senderDomain`). Bounces (`MAIL FROM:<>`) skip the domain check.
+3. **RCPT TO** — Recipient limit, accepted domains and known recipients (`incoming.recipients`)
+4. **DATA** — Full email processing:
+   - Enforces `incoming.maxMessageSizeBytes`
+   - Runs **DKIM, SPF and DMARC** with `mailauth` against the connecting client IP and HELO, on the original unmodified message
+   - Applies the action configured for each result (`checks.spf`, `checks.dkim`, `checks.dmarc`)
+   - Strips sender-supplied `X-AE-*` headers and forged `Authentication-Results`, then adds ours
+   - Seals with ARC headers when enabled and `ARC_PRIVATE_KEY_PATH` and `ARC_SIGNING_DOMAIN` are set
+   - Encrypts the final message with PGP for at-rest storage when enabled and PGP keys are set
+
+AUTH is disabled on port 25. The `checks.*` and `incoming.*` names refer to `mail.config.json` (see [Configuration files](#configuration-files)).
 
 ---
 
@@ -142,10 +144,198 @@ When a client submits mail on port 587:
 2. **MAIL FROM** — Validates sender, checks for relay
 3. **RCPT TO** — Logs recipient info
 4. **DATA** — Full email processing:
-   - Parses raw email to extract To/Cc/Bcc recipients
-   - Deduplicates all recipients, falls back to envelope RCPT TO
-   - Delivers via `NodeMailerMTA.sendMail()` with DKIM signing and DSN
-   - Logs partial delivery failures
+   - Recipients come only from the SMTP envelope (RCPT TO), so Bcc works and is never exposed
+   - Removes any `Bcc:` header and keeps the original message otherwise unchanged
+   - Adds `X-AE-Queue-Id`, the bounce address header and any custom headers from `outgoing.customHeaders`
+   - Signs with DKIM, writes the message to the outbound queue and replies `250 Message queued as <id>`
+
+The JSON send API (below) uses the same steps after it builds the MIME message.
+
+### Outgoing headers
+
+| Header | When | Setting |
+|--------|------|---------|
+| `X-AE-Queue-Id: <id>` | Always | none |
+| `X-AE-Bounce-Address: bounce+<id>@BOUNCE_DOMAIN` | When `BOUNCE_DOMAIN` is set | `outgoing.bounceHeader.enabled`, `outgoing.bounceHeader.name` |
+| Your own headers | When `outgoing.customHeaders.enabled` is `true` | `outgoing.customHeaders.headers` |
+
+Custom header values can use `{queueId}` and `{sender}`, for example:
+
+```json
+"customHeaders": {
+	"enabled": true,
+	"headers": { "X-Campaign": "spring-{queueId}", "List-Unsubscribe": "<mailto:unsubscribe@yourdomain.com?subject={queueId}>" }
+}
+```
+
+A header set here replaces a header with the same name sent by the client.
+
+### JSON send API
+
+Send mail as JSON instead of SMTP. The server builds the MIME message (in a worker thread), then runs it through the same pipeline as port 587.
+Turn it on with `MAIL_API_TOKEN` (and `api.enabled` in `mail.config.json`). It listens on `MAIL_API_PORT` (default `8080`).
+
+```bash
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Authorization: Bearer $MAIL_API_TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "from": { "name": "Me", "address": "me@yourdomain.com" },
+    "to": "user@example.com",
+    "cc": ["Team <team@example.com>"],
+    "bcc": "audit@yourdomain.com",
+    "replyTo": "support@yourdomain.com",
+    "subject": "Hello",
+    "text": "Plain text body",
+    "html": "<p>HTML body</p>",
+    "headers": { "X-Order-Id": "1234" },
+    "attachments": [{ "filename": "invoice.pdf", "content": "<base64>", "contentType": "application/pdf" }]
+  }'
+```
+
+- Required: `from`, at least one of `to`, `cc` or `bcc`, and `text` or `html`
+- Addresses can be `"a@b.com"`, `"Name <a@b.com>"`, `{ "name", "address" }`, or a list of these
+- `bcc` addresses get the message but never appear in its headers
+- `headers` can't set `From`, `To`, `Cc`, `Bcc`, `Subject`, `Content-Type` or other structural headers
+- Answers `202 { id, from, recipients }`. Errors answer `400` with a message, `401` without the token, `413` when too large, and `429` when rate limited
+
+### Outbound queue
+
+Queued mail is stored in `MAIL_SPOOL_DIR` and survives restarts. Each recipient is tracked separately:
+
+- Delivered: removed from the queue
+- Permanent failure (`5xx`): removed and logged
+- Temporary failure (`4xx`, timeout, connection refused): retried on the `queue.retryDelaysMinutes` schedule (1, 5, 15, 30, 60, 120, then every 240 minutes) until `queue.maxAgeHours`
+
+Delivery goes straight to the recipient's MX, or to `OUTBOUND_RELAY_HOST` (for example KumoMTA) when set.
+Direct delivery follows the recipient domain's MTA-STS policy: in `enforce` mode it requires TLS with a valid certificate and an allowed MX. Relay connections always verify the certificate, except on loopback.
+
+### Outbound drivers
+
+`OUTBOUND_DRIVER` decides what the queue does with each message. Retries, suppression and bounces work the same for every driver.
+
+| Driver | What it does | Settings |
+|--------|--------------|----------|
+| `direct` (default) | Node MTA delivers straight to the recipient's MX | none |
+| `go` | Go MTA service (`server/go-mta`) delivers to the MX | `GO_MTA_URL`, `GO_MTA_TOKEN` |
+| `relay` | SMTP submission to another MTA, such as KumoMTA on the private network | `OUTBOUND_RELAY_*` |
+| `kumo-http` | KumoMTA HTTP injection API (`/api/inject/v1`) | `KUMO_HTTP_URL`, `KUMO_HTTP_USER`, `KUMO_HTTP_PASS` |
+
+With `relay` or `kumo-http`, KumoMTA doesn't need to be reachable from the internet. Only the Node app talks to it.
+If KumoMTA signs DKIM, leave `DKIM_PRIVATE_KEY` empty so the message isn't signed twice.
+
+**What KumoMTA needs from each driver**
+
+| | `relay` (SMTP) | `kumo-http` |
+|---|---|---|
+| Message | The raw MIME message, unchanged | The raw MIME message as the `content` string |
+| Sender | `MAIL FROM` | `envelope_sender` (required) |
+| To, Cc, Bcc | One `RCPT TO` per address. To and Cc stay in the message headers | Every address in `recipients` (required). To and Cc stay in the message headers |
+| Access | `relay_hosts` and SMTP AUTH on the listener | `trusted_hosts` on the HTTP listener, optional Basic auth |
+
+- `kumo-http` sends `template_dialect: "Static"`, so KumoMTA doesn't run the message through its template engine. A `{{` in a message would otherwise be changed. KumoMTA older than 2025.12.02 doesn't know this field; set `KUMO_HTTP_STATIC_CONTENT=false` for those.
+- `kumo-http` sends the message as JSON text, so it needs valid UTF-8. Use `relay` for 8-bit messages in other charsets.
+- KumoMTA's own JSON "builder" form (`content` as an object) has no Cc field. That is why the JSON send API builds the MIME message itself and always sends it raw.
+- KumoMTA's docs don't say how a raw message's own To and Cc headers are handled for each recipient. Send one test message through your KumoMTA version before relying on it.
+
+`OUTBOUND_RELAY_TLS` sets how the relay connection uses TLS:
+- `verify` (default): requires TLS with a valid certificate.
+- `insecure`: encrypts but accepts self-signed certificates.
+- `none`: plain connection, for a trusted private network only.
+
+### Go MTA
+
+A small delivery service using only the Go standard library. Node posts each message to it and it reports a result per recipient.
+
+```bash
+cd server/go-mta
+go build -o go-mta .
+GO_MTA_LISTEN=127.0.0.1:2580 GO_MTA_TOKEN=change-me GO_MTA_EHLO=smtp.yourdomain.com ./go-mta
+```
+
+- `POST /v1/deliver` takes `{ "from", "to": [], "raw": "<base64>" }` and returns `{ "results": [{ recipient, success, temporary, status, response, remoteMta }] }`
+- `GET /healthz`
+- Optional: `GO_MTA_ROUTES=example.org=10.0.0.5:25` sends a domain to a fixed host instead of its MX
+- A `Dockerfile` is included
+
+### Bounce server
+
+When `BOUNCE_DOMAIN` is set (for example `bounces.yourdomain.com`, with its MX pointing at this server), outgoing mail uses `bounce+<queueId>@BOUNCE_DOMAIN` as the envelope sender. Bounces then come back to this server instead of the user's mailbox.
+
+Bounces are accepted in four places:
+- Port 25, for any recipient at `BOUNCE_DOMAIN`
+- Port 25, for a bounce report (`multipart/report`) sent to a normal mailbox. It is still delivered to the mailbox, and the DSN processor also records it.
+- The bounce SMTP server on `BOUNCE_SMTP_PORT` (default `2525`, turned off by `0` or `bounces.smtpServer.enabled=false`)
+- `POST /kumo/events` on `BOUNCE_HTTP_PORT` (default `8025`) for KumoMTA log events: `Bounce`, `TransientFailure`, `Expiration`, `Feedback`. Needs `BOUNCE_WEBHOOK_TOKEN` as a Bearer token or `?token=`.
+
+The bounce SMTP server follows the same layout as the incoming and outgoing servers: `BounceServerConfig` in `server/src/server/BounceServer.ts` and `NewBounceMailHandler` in `server/src/services/BounceMailHandler.ts`. The HTTP side is `BounceWebhookServerConfig` with `NewBounceWebhookHandler`.
+
+The DSN processor (`services/bounce/DsnProcessor.ts`) reads each report's per-recipient status and matches it to the message we sent, using the VERP address or the `X-AE-Queue-Id` in the returned headers.
+
+For every bounce:
+- The original sender gets a standard bounce report (unless `bounces.notifySender` is `false`). The same happens when the queue gives up on a recipient.
+- Addresses that hard-bounce (`5.1.x`) or send a spam complaint go on a suppression list for `bounces.suppression.days`. Later mail to them fails straight away instead of being sent.
+- Only a bounce sent to the VERP address of a message we really sent, naming one of that message's recipients, can suppress an address, so a forged bounce can't block anyone. Reports that reach a normal mailbox are recorded but never suppress.
+- Each event is posted to `BOUNCE_EVENTS_WEBHOOK_URL` if set.
+
+Manage the suppression list with `GET` or `DELETE /suppressions/<email>` (same token).
+
+### Background workers
+
+DKIM checks on incoming mail, DKIM signing, PGP encryption, bounce parsing and building MIME messages for the JSON API run in worker threads, so a large message doesn't block other SMTP sessions.
+Set `MAIL_WORKERS` for the number of threads (default: CPU cores minus 1, at most 4; `0` runs on the main thread).
+When the work queue is full, clients get `451 4.3.2 Server is busy` and try again later.
+
+### Configuration files
+
+Settings are split three ways:
+
+| Where | What |
+|-------|------|
+| `server/.env`, read only through `server/src/config/env.ts` | Hosts, ports, keys, passwords, driver choice |
+| `server/config/mail.config.json` | What is turned on or off, policy actions, limits, queue and bounce behaviour |
+| `server/config/smtp-messages.json` | Code, enhanced status and text of every SMTP reply the server sends |
+
+Fixed values (driver names, DSN statuses, default settings, built-in reply catalog) are in `server/src/config/constants.ts`.
+
+Both JSON files reload when you save them. If a file has a mistake, the server logs each problem and keeps the previous settings.
+Listener settings (bounce servers on or off, the size advertised in EHLO) apply on restart. Everything else applies straight away.
+
+**Policy actions.** Each check in `incoming.checks` takes one of:
+
+| Action | Result |
+|--------|--------|
+| `accept` | Ignore the result |
+| `tag` | Accept, and add `X-AE-Spam-Flag: YES` and `X-AE-Policy-Flags` to the message |
+| `tempfail` | Reply `4xx` so the sender retries later |
+| `reject` | Reply `5xx` |
+
+| Check | Setting | Default | Reject reply |
+|-------|---------|---------|--------------|
+| Reverse DNS (with forward confirmation) | `reverseDns.enabled`, `onFail` | off, `tag` | `550 5.7.25` |
+| Sender domain has no MX, A or AAAA | `senderDomain.onUnroutable` | `reject` | `550 5.1.8` |
+| SPF `fail` / `softfail` / `none` / `temperror` | `spf.onFail`, `onSoftFail`, `onNone`, `onTempError` | `tag`, `accept`, `accept`, `accept` | `550 5.7.23` |
+| DKIM fails / no signature | `dkim.onFail`, `onNone` | `tag`, `accept` | `550 5.7.20` |
+| DMARC fails with `p=reject` / `p=quarantine` | `dmarc.onReject`, `onQuarantine` | `reject`, `tag` | `550 5.7.26` |
+
+A DNS error never causes a hard reject: `reject` becomes `tempfail` for that message.
+`incoming.trustedNetworks` (default: loopback) skips the checks and the rate limit, for example for an internal relay.
+
+Other switches in `mail.config.json`:
+- `incoming.maxMessageSizeBytes`, `maxRecipients`, `rateLimit`, `recipients.acceptedDomains` (empty accepts any), `recipients.knownRecipients` (empty accepts any user), `arcSeal`, `pgpEncryption`, `customHeaders`
+- `outgoing.maxMessageSizeBytes`, `maxRecipients`, `rateLimit` (`maxConnectionsPerMinute: null` uses `MAX_EMAILS_PER_MINUTE`), `dkimSign`
+- `queue.maxConcurrent`, `maxAgeHours`, `retryDelaysMinutes`
+- `outgoing.bounceHeader`, `outgoing.customHeaders` (see [Outgoing headers](#outgoing-headers))
+- `bounces.notifySender`, `suppression.enabled`, `suppression.days`, `trackingDays`, `smtpServer.enabled`, `httpServer.enabled`
+- `api.enabled` for the JSON send API
+
+**SMTP replies.** `smtp-messages.json` lists every reply the server sends, by key, for example:
+
+```json
+"MAILBOX_FULL": { "code": 552, "status": "5.2.2", "message": "Mailbox {recipient} is full" }
+```
+
+Change the text or code and save. `{placeholders}` are filled in at send time. The status must match the class of the code (`5xx` with `5.x.x`).
+Replies that smtp-server sends itself, such as command syntax errors or `530 Authentication required`, are not in this file.
 
 ---
 
@@ -171,6 +361,53 @@ PGP_PRIVATE_KEY="-----BEGIN PGP PRIVATE KEY BLOCK-----\n..."
 PGP_PUBLIC_KEY="-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
 PGP_REVOCATION_CERTIFICATE="-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
 PGP_PASSPHRASE="your_secure_passphrase"
+
+# Files (behaviour lives in config/mail.config.json, reply texts in config/smtp-messages.json)
+MAIL_SPOOL_DIR=./spool
+MAIL_CONFIG_PATH=./config/mail.config.json
+SMTP_MESSAGES_PATH=./config/smtp-messages.json
+
+# Outbound driver: direct | go | relay | kumo-http
+OUTBOUND_DRIVER=direct
+
+# relay driver (SMTP submission, e.g. KumoMTA on the private network)
+OUTBOUND_RELAY_HOST=
+OUTBOUND_RELAY_PORT=587
+OUTBOUND_RELAY_USER=
+OUTBOUND_RELAY_PASS=
+OUTBOUND_RELAY_CA_PATH=
+OUTBOUND_RELAY_TLS=verify
+
+# kumo-http driver
+KUMO_HTTP_URL=http://kumomta:8000
+KUMO_HTTP_USER=
+KUMO_HTTP_PASS=
+KUMO_HTTP_STATIC_CONTENT=true
+
+# go driver
+GO_MTA_URL=http://go-mta:2580
+GO_MTA_TOKEN=
+
+# Bounces
+BOUNCE_DOMAIN=
+BOUNCE_SMTP_PORT=2525
+BOUNCE_HTTP_PORT=8025
+BOUNCE_WEBHOOK_TOKEN=
+BOUNCE_EVENTS_WEBHOOK_URL=
+BOUNCE_EVENTS_WEBHOOK_TOKEN=
+
+# JSON send API (off until a token is set)
+MAIL_API_HOST=0.0.0.0
+MAIL_API_PORT=8080
+MAIL_API_TOKEN=
+
+# Worker threads (0 = main thread)
+MAIL_WORKERS=
+
+# Optional: ARC sealing of incoming mail
+ARC_PRIVATE_KEY_PATH=
+ARC_SIGNING_DOMAIN=
+ARC_SELECTOR=default
 ```
 
 ---
@@ -433,6 +670,7 @@ Each call to `mta.sendMail()` or `mta.sendViaRelay()` returns `DeliveryResult[]`
 ```ts
 interface DeliveryResult {
   success: boolean;           // true if accepted by remote MX
+  temporary: boolean;         // true for 4xx / network errors that should be retried
   recipient: string;          // email address
   response?: string;          // SMTP response string
   error?: string;             // error message if failed
