@@ -1,0 +1,108 @@
+---
+title: Known issues
+description: What does not work yet in the KumoMTA policy, why, and how to fix it.
+---
+
+The policy in `outbound/policy/` has been checked against the [KumoMTA documentation](https://docs.kumomta.com/), but it has not been run end to end. These are the problems found.
+
+## USE_RELAY=true breaks sending
+
+`init.lua` defines the sender check as:
+
+```lua
+kumo.on('smtp_server_mail_from', function(sender, msg, conn)
+```
+
+KumoMTA calls this handler with two arguments, `(sender, conn_meta)`, so `conn` is `nil` and the first `conn:get_meta` fails. The sender is also an address object, not a string, so `string.match(sender, ...)` fails too.
+
+With `USE_RELAY=false` the handler returns before it reaches that code, which is why it only shows up when the setting is `true`. Fix:
+
+```lua
+kumo.on('smtp_server_mail_from', function(sender, conn)
+  if use_relay == 'false' then
+    return
+  end
+
+  if not conn:get_meta 'authn_id' then
+    return kumo.reject(550, '5.7.1 Authentication required')
+  end
+
+  local allowed_domains = dofile '/opt/kumomta/etc/policy/domains.lua'
+  if not allowed_domains[sender.domain] then
+    return kumo.reject(550, '5.7.1 Sender domain not allowed')
+  end
+end)
+```
+
+`authn_id` is set by KumoMTA itself after a successful login.
+
+## DKIM signing does not work
+
+`dkim.lua` has four mismatches with the KumoMTA API:
+
+| In `dkim.lua` | Problem | Use instead |
+|---------------|---------|-------------|
+| `msg:dkim_sign { ... }` | `dkim_sign` takes a signer object, not a table. | `kumo.dkim.rsa_sha256_signer { ... }`, then `msg:dkim_sign(signer)` |
+| `key = private_key` | A string key is read as a file path. | `key = { key_data = private_key }` |
+| `kumo.log(level, text)` | There is no `kumo.log`. | `kumo.log_info`, `kumo.log_warn` or `kumo.log_error` |
+| `kumo.http_request` and `kumo.redis_connect` | Neither exists. | `kumo.http.build_client`, and `require 'redis'` with `redis.open` |
+
+A corrected signing function looks like this. It follows the KumoMTA reference, and has not been run here:
+
+```lua
+local function sign_with_dkim(msg)
+  local from = msg:from_header()
+  local domain = from and from.domain
+  if not domain then
+    kumo.log_warn 'DKIM: could not parse the From domain'
+    return
+  end
+
+  local private_key = get_dkim_private_key(domain, dkim_selector)
+  if not private_key then
+    kumo.log_warn('DKIM: key not found for ' .. domain)
+    return
+  end
+
+  local signer = kumo.dkim.rsa_sha256_signer {
+    domain = domain,
+    selector = dkim_selector,
+    headers = { 'From', 'To', 'Subject', 'Date', 'Message-ID' },
+    key = { key_data = private_key },
+  }
+  msg:dkim_sign(signer)
+end
+```
+
+Until this is fixed, KumoMTA sends mail without a DKIM signature. Either sign in the Node app (set `DKIM_PRIVATE_KEY` there) or fix the policy first.
+
+## Traffic shaping is not loaded
+
+`shaping.toml` has rules for Google, Microsoft, Yahoo, Apple and others, but nothing loads it. KumoMTA only reads shaping files through the `get_egress_path_config` event, and `init.lua` does not register one. Only the per-domain message rate in `queue.lua` applies.
+
+To load it, use the shaping helper:
+
+```lua
+local shaping = require 'policy-extras.shaping'
+
+local shaper = shaping:setup_with_automation {
+  publish = { 'http://127.0.0.1:8008' },
+  subscribe = { 'http://127.0.0.1:8008' },
+  extra_files = { '/opt/kumomta/etc/policy/shaping.toml' },
+}
+
+kumo.on('init', function()
+  shaper.setup_publish()
+end)
+
+kumo.on('get_egress_path_config', shaper.get_egress_path_config)
+```
+
+The `automation` rules in `shaping.toml` (for example "slow down after a 421 from Gmail") also need KumoMTA's TSA daemon, `tsa-daemon`, which is a separate process. The `outbound` container only runs `kumod`, so add a second service or process that runs `tsa-daemon` with a `tsa_init.lua`. See [Traffic shaping automation](https://docs.kumomta.com/userguide/trafficshaping/automation/) in the KumoMTA docs.
+
+## Smaller issues
+
+- **Unused values in `queue.lua`.** The `conns` and `per_conn` values are calculated for each domain but never used. Connection limits belong in the shaping file.
+- **Two lists of domains.** `domains.lua` and `listener_domains.toml` hold the same domains. Keep one source of truth.
+- **`WEBHOOK_SECRET` is not sent.** `webhook.lua` reads it but does not add it to the request, so a receiver cannot verify the sender.
+- **Plain-text passwords** in `users.lua`.
