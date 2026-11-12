@@ -1,0 +1,10 @@
+["*"]
+relay_to = false
+log_oob = true
+log_arf = true
+
+["enjoys.in"]
+relay_to = true
+
+["airsend.in"]
+relay_to = true
