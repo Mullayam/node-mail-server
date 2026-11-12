@@ -40,6 +40,17 @@ export interface Question {
 	name: string;
 	type: number;
 }
+export interface SenderDomainRecords {
+	mxRecords: { exchange: string; priority: number }[];
+	spfRecords: string[][];
+	dmarcRecords: string[][];
+	txtRecords: string[][];
+	nsRecords: string[];
+	aRecords: string[];
+	aaaaRecords: string[];
+	validDomain: boolean;
+	temporaryFailure: boolean;
+}
 export type RecordTypeRespose = {
 	type: number;
 	name: string;
