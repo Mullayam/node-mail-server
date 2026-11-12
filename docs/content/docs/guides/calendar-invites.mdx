@@ -1,0 +1,74 @@
+---
+title: Calendar invites
+description: Create iCalendar events with a Google Meet link and send them by email.
+---
+
+The server can build an iCalendar (`.ics`) invite, attach a Google Meet link and email it to the attendees.
+
+<Callout title="Needs your own Google credentials" type="warn">
+  `MeetingService` currently contains a placeholder API key. Replace it with real Google credentials (below) before you use it. Nothing calls `IcalService` automatically yet, so use it from your own code.
+</Callout>
+
+## Enable the Google Calendar API
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project, or select an existing one.
+3. Enable the Google Calendar API for the project.
+4. Create OAuth 2.0 credentials or a service account.
+5. Download the credentials JSON file.
+
+The packages are already in `server/package.json`. To add them elsewhere:
+
+```bash
+npm install googleapis nodemailer ics
+```
+
+## Create an invite
+
+`IcalService.createEvent` (`server/src/services/IcsEvents.ts`) creates a Google Meet event and returns the invite.
+
+```ts
+import IcalService from "./services/IcsEvents";
+
+const { error, value } = await IcalService.createEvent({
+  uid: "meeting-123",
+  method: "REQUEST",
+  title: "Project sync",
+  description: "Weekly project update",
+  location: "Online",
+  start: "2026-12-01T10:00:00Z",
+  end: "2026-12-01T10:30:00Z",
+  organizer: { name: "Alice", email: "alice@example.com" },
+  attendees: ["bob@example.com", "carol@example.com"],
+  sequence: 0,
+});
+```
+
+| Field | Meaning |
+|-------|---------|
+| `title`, `description` | Shown in the invite and in the Google Calendar event. |
+| `start`, `end` | Start and end time as ISO 8601 strings. |
+| `organizer` | Name and email of the person sending the invite. |
+| `attendees` | Email addresses to invite. Each is asked to reply (RSVP). |
+
+The options type (`GenreateICSOptions`) also has `uid`, `method`, `location` and `sequence`, but `createEvent` does not use them yet. That means you cannot update or cancel an event through this function so far.
+
+`value` holds the `.ics` text and `error` is set if it could not be built. Attach `value` to an email as `text/calendar`.
+
+## Integrations
+
+- [x] Google Meet and Google Calendar
+- [ ] Cal.com
+- [ ] Zoho Calendar
+- [ ] Zoom Meetings
+
+## Calendar UI references
+
+If you build a calendar screen, these projects are good starting points:
+
+- [shadcn Cal.com demo](https://shadcn-cal-com.vercel.app/?date=2025-03-02)
+- [next-ui-full-calendar](https://github.com/Mina-Massoud/next-ui-full-calendar)
+- [Schedule-X](https://github.com/schedule-x/schedule-x)
+- [Synergy calendar](https://synergy-platform.vercel.app/calendar)
+- [charlietlamb/calendar](https://github.com/charlietlamb/calendar)
+- [shadcn-ui-big-calendar](https://github.com/list-jonas/shadcn-ui-big-calendar)
