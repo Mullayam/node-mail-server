@@ -19,7 +19,9 @@ cp relay/policy/users.example.lua relay/policy/users.lua
 docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml ps
 
-# Optional: also start IMAP (it does not build yet)
+# Optional: also start IMAP (prototype)
+cp server/imap/conf/imap.example.xml server/imap/conf/imap.xml
+cp server/imap/conf/users.example.xml server/imap/conf/users.xml
 docker compose -f deploy/docker-compose.yml --profile imap up -d
 ```
 
@@ -30,8 +32,8 @@ docker compose -f deploy/docker-compose.yml --profile imap up -d
 | `inbound` | Built from `server/Dockerfile` | 25 | The Node mail server. Receives mail on port 25. |
 | `outbound` | `ghcr.io/kumocorp/kumomta:latest` | 587 | KumoMTA. Accepts authenticated mail and delivers it. |
 | `relay` | `ghcr.io/kumocorp/kumomta:latest` | 2587 | KumoMTA. Public relay with a login and a webhook per account. See [Relay](/docs/outbound/relay). |
-| `imap` | Built from `server/imap/Dockerfile` | 143 | Gluon IMAP server. Only with `--profile imap`. |
-| `redis` | `redis:7-alpine` | none | Shared by KumoMTA (DKIM keys) and IMAP. Not published. |
+| `imap` | Built from `server/imap/Dockerfile` | 143 (`127.0.0.1` only), 993 | Gluon IMAP server with mail in Pebble. 993 answers once TLS is set. Only with `--profile imap`. |
+| `redis` | `redis:7-alpine` | none | Used by KumoMTA for DKIM keys. Not published. |
 
 The `inbound` image runs `bun src/main.ts`, because Bun resolves the `@/` path alias that plain Node cannot.
 
@@ -43,7 +45,7 @@ The `inbound` image runs `bun src/main.ts`, because Bun resolves the `@/` path a
 | `kumo-logs` | `/var/log/kumomta` | KumoMTA's logs. |
 | `relay-spool` | `/var/spool/kumomta` | The relay's queued messages and pending webhook events. |
 | `relay-logs` | `/var/log/kumomta` | The relay's logs. |
-| `imap-data` | `/data` | Gluon's local cache. |
+| `imap-data` | `/data` | Stored mail (Pebble, in `/data/mail`) and Gluon's cache (`/data/gluon`). Back this volume up. |
 | `redis-data` | `/data` | Redis data. |
 
 `outbound/policy/` is mounted read-only at `/opt/kumomta/etc/policy`. To use file-based DKIM keys, uncomment the `outbound/dkim` mount in the compose file.
@@ -59,8 +61,8 @@ Only one program can publish a host port. In this compose file:
 
 To send through the Node app instead, publish 587 on `inbound` and remove it from `outbound`. To use KumoMTA as a relay behind the Node app, keep KumoMTA's port private and point `OUTBOUND_RELAY_HOST` at the `outbound` service. The two services share a Docker network, so `outbound` resolves by name.
 
-<Callout title="IMAP does not build yet" type="warn">
-  `server/imap/go.mod` has no requirements and its import paths do not match the folders. That is why IMAP is behind a profile. See [IMAP](/docs/imap/overview).
+<Callout title="IMAP is opt-in" type="warn">
+  IMAP is behind a profile. Port 143 is published on `127.0.0.1` only. Port 993 is public, but answers only after you put a certificate in `server/imap/tls/` and enable `<tls>`. Mail received on port 25 is not written into IMAP storage yet. See [IMAP](/docs/imap/overview).
 </Callout>
 
 ## Everyday commands
@@ -69,4 +71,7 @@ To send through the Node app instead, publish 587 on `inbound` and remove it fro
 docker compose -f deploy/docker-compose.yml logs -f outbound   # follow KumoMTA's logs
 docker compose -f deploy/docker-compose.yml restart outbound   # reload policy changes
 docker compose -f deploy/docker-compose.yml down               # stop everything, keep volumes
+
+# IMAP: apply edits to server/imap/conf/*.xml without a restart
+docker compose -f deploy/docker-compose.yml exec imap imapctl reload
 ```
