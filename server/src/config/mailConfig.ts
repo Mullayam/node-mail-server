@@ -3,6 +3,7 @@ import {
 	CONFIG_ERROR,
 	DEFAULT_MAIL_CONFIG,
 	FREEFORM_CONFIG_PATHS,
+	HEADER_NAME_PATTERN,
 	type MailConfig,
 	POLICY_ACTION,
 	POLICY_ACTION_PATHS,
@@ -69,6 +70,19 @@ function validate(config: MailConfig): string[] {
 	for (const cidr of config.incoming.trustedNetworks) {
 		if (!parseNetwork(cidr))
 			errors.push(CONFIG_ERROR.INVALID_CIDR("incoming.trustedNetworks", cidr));
+	}
+	const headerNames: [string, string][] = [
+		["outgoing.bounceHeader.name", config.outgoing.bounceHeader.name],
+		...Object.keys(config.incoming.customHeaders.headers).map(
+			(name): [string, string] => ["incoming.customHeaders.headers", name],
+		),
+		...Object.keys(config.outgoing.customHeaders.headers).map(
+			(name): [string, string] => ["outgoing.customHeaders.headers", name],
+		),
+	];
+	for (const [path, name] of headerNames) {
+		if (!HEADER_NAME_PATTERN.test(name))
+			errors.push(CONFIG_ERROR.INVALID_HEADER_NAME(path, name));
 	}
 	return errors;
 }

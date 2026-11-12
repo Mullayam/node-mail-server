@@ -4,7 +4,6 @@ export const OUTBOUND_DRIVER = {
 	GO: "go",
 	RELAY: "relay",
 	KUMO_HTTP: "kumo-http",
-	JSON: "json",
 } as const;
 export type OutboundDriverName =
 	(typeof OUTBOUND_DRIVER)[keyof typeof OUTBOUND_DRIVER];
@@ -46,6 +45,8 @@ export const KUMO_EVENT_BOUNCE_TYPE: Record<string, BounceType> = {
 	Feedback: BOUNCE_TYPE.COMPLAINT,
 };
 
+export const KUMO_TEMPLATE_DIALECT_STATIC = "Static";
+
 export const KUMO_ADDRESS_FAILURE_CLASSIFICATIONS = [
 	"InvalidRecipient",
 	"BadDestinationMailbox",
@@ -65,7 +66,10 @@ export const HEADER = {
 	RECEIPT_TIME: "X-AE-Receipt-Time",
 	SPAM_FLAG: "X-AE-Spam-Flag",
 	POLICY_FLAGS: "X-AE-Policy-Flags",
+	BOUNCE_ADDRESS: "X-AE-Bounce-Address",
 } as const;
+
+export const HEADER_NAME_PATTERN = /^[!-9;-~]+$/;
 
 export const DSN_STATUS = {
 	DELIVERED: "2.0.0",
@@ -107,7 +111,27 @@ export const DELIVERY_ERROR = {
 		`Rejected by ${service}: ${reason}`,
 	NOT_UTF8:
 		"Message is not valid UTF-8 and cannot be sent over the KumoMTA HTTP API, use the relay driver",
-	PRINTED_BY_JSON_DRIVER: "Printed by the json driver, not sent",
+} as const;
+
+export const API_ERROR = {
+	UNAUTHORIZED: "Unauthorized",
+	INVALID_BODY: "Request body must be a JSON object",
+	MISSING_FROM: "from is required",
+	INVALID_ADDRESS: (field: string, value: string) =>
+		`${field} has an invalid address: ${value}`,
+	NO_RECIPIENTS: "At least one recipient is required in to, cc or bcc",
+	TOO_MANY_RECIPIENTS: (max: number) =>
+		`Too many recipients, the limit is ${max}`,
+	NO_CONTENT: "text or html is required",
+	INVALID_HEADERS:
+		"headers must be an object of text values with valid header names",
+	INVALID_ATTACHMENT: (index: number) =>
+		`attachments[${index}] needs a filename and base64 content`,
+	TOO_LARGE: (max: number) =>
+		`Message exceeds the maximum size of ${max} bytes`,
+	INTERNAL: "The message could not be queued, try again later",
+	WRONG_TYPE: (field: string, expected: string) =>
+		`${field} must be ${expected}`,
 } as const;
 
 export const CONFIG_ERROR = {
@@ -127,6 +151,8 @@ export const CONFIG_ERROR = {
 		`${path}.status must look like 5.1.1 and match the class of the code`,
 	INVALID_REPLY_MESSAGE: (path: string) =>
 		`${path}.message must be a single line of text`,
+	INVALID_HEADER_NAME: (path: string, value: string) =>
+		`${path} has an invalid header name "${value}"`,
 	INVALID_CIDR: (path: string, value: string) =>
 		`${path} has an invalid network "${value}"`,
 } as const;
@@ -170,6 +196,7 @@ export const DEFAULTS = {
 	SMTP_PORT_OUTGOING: 587,
 	BOUNCE_SMTP_PORT: 2525,
 	BOUNCE_HTTP_PORT: 8025,
+	API_PORT: 8080,
 	LISTEN_HOST: "0.0.0.0",
 	RELAY_PORT: 587,
 	RELAY_MAX_CONNECTIONS: 5,
@@ -229,7 +256,10 @@ export interface MailConfig {
 		maxRecipients: number;
 		rateLimit: { enabled: boolean; maxConnectionsPerMinute: number | null };
 		dkimSign: boolean;
+		bounceHeader: { enabled: boolean; name: string };
+		customHeaders: { enabled: boolean; headers: Record<string, string> };
 	};
+	api: CheckSettings;
 	queue: {
 		maxConcurrent: number;
 		maxAgeHours: number;
@@ -259,6 +289,7 @@ export const POLICY_ACTION_PATHS = [
 
 export const FREEFORM_CONFIG_PATHS = [
 	"incoming.customHeaders.headers",
+	"outgoing.customHeaders.headers",
 ] as const;
 
 export const DEFAULT_MAIL_CONFIG: MailConfig = {
@@ -310,7 +341,10 @@ export const DEFAULT_MAIL_CONFIG: MailConfig = {
 		maxRecipients: 100,
 		rateLimit: { enabled: true, maxConnectionsPerMinute: null },
 		dkimSign: true,
+		bounceHeader: { enabled: true, name: HEADER.BOUNCE_ADDRESS },
+		customHeaders: { enabled: false, headers: {} },
 	},
+	api: { enabled: true },
 	queue: {
 		maxConcurrent: 10,
 		maxAgeHours: 48,

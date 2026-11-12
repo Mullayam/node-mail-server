@@ -36,6 +36,14 @@ const number = (name: string, fallback: number): number => {
 const optionalNumber = (name: string): number | undefined =>
 	raw(name) === undefined ? undefined : number(name, 0);
 
+const flag = (name: string, fallback: boolean): boolean => {
+	const value = raw(name)?.toLowerCase();
+	if (value === undefined) return fallback;
+	if (["true", "1", "yes", "on"].includes(value)) return true;
+	if (["false", "0", "no", "off"].includes(value)) return false;
+	throw new Error(CONFIG_ERROR.INVALID_ENUM(name, value, ["true", "false"]));
+};
+
 const oneOf = <T extends string>(
 	name: string,
 	allowed: readonly T[],
@@ -121,6 +129,7 @@ export const env = {
 			user: optional("KUMO_HTTP_USER"),
 			pass: optional("KUMO_HTTP_PASS"),
 			timeoutMs: number("KUMO_HTTP_TIMEOUT_MS", DEFAULTS.KUMO_HTTP_TIMEOUT_MS),
+			staticContent: flag("KUMO_HTTP_STATIC_CONTENT", true),
 		},
 		go: {
 			url: text("GO_MTA_URL", DEFAULTS.GO_MTA_URL),
@@ -137,6 +146,11 @@ export const env = {
 		webhookToken: optional("BOUNCE_WEBHOOK_TOKEN"),
 		eventsWebhookUrl: optional("BOUNCE_EVENTS_WEBHOOK_URL"),
 		eventsWebhookToken: optional("BOUNCE_EVENTS_WEBHOOK_TOKEN"),
+	},
+	api: {
+		host: text("MAIL_API_HOST", DEFAULTS.LISTEN_HOST),
+		port: number("MAIL_API_PORT", DEFAULTS.API_PORT),
+		token: optional("MAIL_API_TOKEN"),
 	},
 	workers: {
 		count: optionalNumber("MAIL_WORKERS"),
