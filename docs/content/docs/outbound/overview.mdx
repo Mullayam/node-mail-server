@@ -1,0 +1,70 @@
+---
+title: KumoMTA overview
+description: Use KumoMTA as the sending engine, with SMTP authentication, queues, rate limits and delivery webhooks.
+---
+
+[KumoMTA](https://docs.kumomta.com/) is a high-volume mail transfer agent. The `outbound/` folder holds its policy: Lua and TOML files that tell it how to accept, queue and deliver your mail.
+
+<Callout title="Read the known issues first" type="warn">
+  The policy has not been run end to end yet, and some parts do not match KumoMTA's API. See [Known issues](/docs/outbound/known-issues) before you rely on DKIM signing or `USE_RELAY=true`.
+</Callout>
+
+## What it does
+
+```text
+client ──587 + AUTH──▶ KumoMTA ──▶ queue (one per recipient domain)
+                                    ──▶ egress pool (your sending IPs) ──▶ recipient's MX
+                                    ──▶ WEBHOOK_URL (delivery and bounce events)
+```
+
+1. A client or your Node app connects on port 587 and logs in.
+2. KumoMTA checks the sender and recipient, and puts the message in a queue for each destination domain.
+3. It delivers from one of your outbound IP addresses, at a rate set for each provider, and retries temporary failures.
+4. Every delivery, bounce and delay is posted to your webhook as JSON.
+
+## Files
+
+Everything KumoMTA reads is in `outbound/policy/`. The folder is mounted read-only at `/opt/kumomta/etc/policy`, so your `.env` file never enters the container.
+
+| File | What it does |
+|------|--------------|
+| `init.lua` | Entry point. Starts the 587 listener, defines the spool and logs, and handles AUTH, sender and recipient checks. |
+| `dkim.lua` | DKIM signing. Keys come from a file, an HTTP service or Redis. |
+| `egress.lua` | Builds the egress pool `main-pool` from `KUMOMTA_SOURCE_IPS`. |
+| `queue.lua` | Per-domain message rate and the retry schedule. |
+| `webhook.lua` | Posts log events to `WEBHOOK_URL`. |
+| `listener_domains.toml` | Which domains accept relayed mail and bounce reports. |
+| `domains.lua` | Sender domains that are allowed when `USE_RELAY=true`. |
+| `shaping.toml` | Per-provider connection and rate rules. Not loaded yet. |
+| `users.lua` | SMTP usernames and passwords. Not committed. Start from `users.example.lua`. |
+
+## Run it
+
+From the repository root:
+
+```bash
+cp outbound/.env.example outbound/.env
+cp outbound/policy/users.example.lua outbound/policy/users.lua
+# edit both files, then:
+docker compose -f deploy/docker-compose.yml up -d outbound
+docker compose -f deploy/docker-compose.yml logs -f outbound
+```
+
+Spool and logs live in the `kumo-spool` and `kumo-logs` volumes, so queued mail survives a rebuild.
+
+KumoMTA's HTTP API listens on `127.0.0.1:8000` inside the container only. To look at the queues, use `kcli` from inside it:
+
+```bash
+docker compose -f deploy/docker-compose.yml exec outbound /opt/kumomta/sbin/kcli queue-summary
+```
+
+## Next
+
+<Cards>
+  <Card title="Configuration" href="/docs/outbound/configuration">
+    Users, domains, DKIM keys, IPs, queues and webhooks.
+  </Card>
+  <Card title="Known issues" href="/docs/outbound/known-issues">
+    What does not work yet, and how to fix it.
+  </Card>
+</Cards>
