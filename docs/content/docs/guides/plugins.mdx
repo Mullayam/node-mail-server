@@ -1,0 +1,101 @@
+---
+title: Plugins
+description: Privacy, filtering and rate-limiting building blocks in server/src/server/plugins.
+---
+
+The plugins live in `server/src/server/plugins/`.
+
+<Callout title="Not connected to the mail pipeline yet" type="warn">
+  `EmailPrivacyProtector`, `ImageProxyServer`, `MailRateLimiter` and `FiltersEngine` are finished classes that nothing calls yet. Use them from your own code or wire them into the handlers in `server/src/services/`. They need Redis where noted.
+</Callout>
+
+## Tracking protection
+
+`EmailPrivacyProtector` (`TrackingProtection.ts`) removes tracking from the HTML of an email.
+
+```ts
+import { EmailPrivacyProtector } from "./server/plugins/TrackingProtection";
+
+const protector = new EmailPrivacyProtector("http://localhost:3000");
+const { cleanedHtml, trackersDetected } = await protector.protectHTMLBody(html);
+```
+
+It does three things:
+
+- **Removes tracking pixels.** An image, iframe, object or embed is treated as a pixel when it is 1 by 1, or its style makes it invisible (`width:1px`, `height:1px`, `display:none`, `visibility:hidden` or `opacity:0`).
+- **Routes other images through the image proxy.** The `src` becomes `PROXY_URL/proxy?url=ORIGINAL`, so the sender never sees the reader's IP address.
+- **Cleans links.** It removes `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `fbclid`, `gclid`, `ref`, `tk` and `dclid` from every link.
+
+`protectHTMLBody` returns the cleaned HTML and the number of trackers it found. For raw, quoted-printable bodies use `proctectEmailBody(chunks)`, which decodes the body, strips the `src` of tracking elements and cleans the link parameters.
+
+## Image proxy
+
+`ImageProxyServer` (`ImageProxyServer.ts`) is a small Express server that fetches remote images for the reader.
+
+```ts
+import { ImageProxyServer } from "./server/plugins/ImageProxyServer";
+
+const proxy = new ImageProxyServer({
+  port: 3000,
+  redisUrl: "redis://localhost:6379",
+  allowedDomains: [],        // empty means any public domain
+  cacheTTLSeconds: 3600,     // default 1 hour
+  maxImageBytes: 5 * 1024 * 1024,
+});
+
+proxy.start();               // it does not listen until you call start()
+```
+
+It serves `GET /proxy?url=<image url>`.
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `port` | 3000 | Port to listen on. |
+| `redisUrl` | required | Redis connection used for the image cache. |
+| `allowedDomains` | any | Restrict images to these domains (and their subdomains). |
+| `cacheTTLSeconds` | 3600 | How long an image stays in the cache. |
+| `maxImageBytes` | 5 MB | Largest image it will download. |
+
+Safety limits built in:
+
+- Private, loopback, link-local and other reserved IP ranges are blocked, including after redirects, so the proxy cannot be used to reach your internal network.
+- Only `image/*` responses are returned. SVG is not, and a fallback image is sent instead.
+- A 7 second timeout and at most 3 redirects.
+- A rate limit of 200 requests per 15 minutes per client.
+
+## Rate limiter
+
+`MailRateLimiter` (`MailRateLimiter.ts`) counts messages per address in Redis.
+
+```ts
+import Redis from "ioredis";
+import { MailRateLimiter } from "./server/plugins/MailRateLimiter";
+
+const limiter = new MailRateLimiter(new Redis());
+const limited = await limiter.isRateLimited("user@example.com", {
+  limit_per_minute: 20,
+  limit_per_Hour: 200,
+  limit_per_day: 1000,
+});
+```
+
+It returns `true` when any of the three limits is exceeded. Counters are stored under `rate:<address>:minute`, `:hour` and `:day`, and expire on their own.
+
+## Filters
+
+`FiltersEngine` (`FiltersEngine.ts`) applies a user's rules to a message. The first rule that matches wins.
+
+| Field | Values |
+|-------|--------|
+| `matchType` | `subject`, `sender`, `body` or `header` |
+| `matchValue` | Text the field has to contain |
+| `action` | `move`, `delete`, `forward` or `flag` |
+| `targetFolder` | Folder for `move` |
+
+<Callout title="Actions only log for now">
+  The matching works, but the four actions currently just write a log line. Connect them to your mail store to make them do something.
+</Callout>
+
+## Per-IP spam protection
+
+`SpamFilteration` is the one protection that is wired in. The SMTP servers call it to limit how many messages one IP address can send. Clients that go over the limit get a temporary error, and repeat offenders are blocked for longer.
