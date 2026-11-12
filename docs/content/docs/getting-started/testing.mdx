@@ -1,0 +1,46 @@
+---
+title: Testing
+description: Check your DNS records, TLS, authentication and delivery before you rely on the server.
+---
+
+## Checklist
+
+- Verify all DNS records (A, PTR, MX, SPF, DKIM, DMARC).
+- Test SMTP authentication.
+- Check TLS encryption.
+- Verify reverse DNS.
+- Test sending and receiving.
+
+## Check your server with MXToolbox
+
+Run the [MXToolbox diagnostic](https://mxtoolbox.com/diagnostic.aspx) against your mail hostname. A healthy server looks like this:
+
+![A passing MXToolbox result](/images/mxtoolbox-result.png)
+
+Also check blacklists for your IP address on the same site, because a listed IP is rejected by many receivers.
+
+## Send a test message
+
+`scripts/send-mail.js` sends one DKIM-signed test message straight to the recipient's MX server on port 25.
+
+```bash
+node scripts/send-mail.js
+```
+
+It asks for three things:
+
+1. The sender address.
+2. One recipient address.
+3. Your DKIM private key.
+
+It looks up the recipient's MX record, connects, signs the message with the selector `default` and sends it.
+
+<Callout title="This sends from the machine you run it on">
+  The script delivers directly to the recipient's server, so it tests the DNS records, DKIM key and the sending IP's reputation, not your SMTP listener on port 587. To test port 587, point any mail client at your server with authentication.
+</Callout>
+
+It loads its packages and `.env` from `server/`, so run `bun install` there first.
+
+## Read the headers
+
+Send a message to a Gmail or Outlook address and open the original message headers. You should see `spf=pass`, `dkim=pass` and `dmarc=pass`. If one fails, the matching record in [DNS records](/docs/getting-started/dns-records) is wrong or has not propagated yet.
