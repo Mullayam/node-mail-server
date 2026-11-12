@@ -4,12 +4,12 @@ import {
 	CONFIG_ERROR,
 	DELIVERY_ERROR,
 	DSN_STATUS,
+	KUMO_TEMPLATE_DIALECT_STATIC,
 	OUTBOUND_DRIVER,
 	RELAY_TLS_MODE,
 	type RelayTlsMode,
 } from "../../../config/constants";
 import { env } from "../../../config/env";
-import { Logging } from "../../../lib/logs";
 import {
 	deliveryResult,
 	type SmtpSender,
@@ -108,6 +108,7 @@ export class KumoHttpDriver implements OutboundDriver {
 			user?: string;
 			pass?: string;
 			timeoutMs: number;
+			staticContent: boolean;
 		},
 	) {
 		this.endpoint = new URL("/api/inject/v1", options.url).toString();
@@ -140,6 +141,9 @@ export class KumoHttpDriver implements OutboundDriver {
 					envelope_sender: mail.from,
 					content,
 					recipients: mail.to.map((email) => ({ email })),
+					...(this.options.staticContent
+						? { template_dialect: KUMO_TEMPLATE_DIALECT_STATIC }
+						: {}),
 				}),
 				signal: AbortSignal.timeout(this.options.timeoutMs),
 			});
@@ -312,36 +316,6 @@ export class GoMtaDriver implements OutboundDriver {
 	async close(): Promise<void> {}
 }
 
-export class JsonDriver implements OutboundDriver {
-	readonly name = OUTBOUND_DRIVER.JSON;
-	private readonly transporter = nodemailer.createTransport({
-		jsonTransport: true,
-	});
-
-	async send(mail: RawMailOptions): Promise<DeliveryResult[]> {
-		const info = await this.transporter.sendMail({
-			envelope: { from: mail.from, to: mail.to },
-			raw: mail.raw.toString("utf8"),
-		});
-		const message = JSON.parse(String(info.message)) as Record<string, unknown>;
-		Logging.dev(
-			`[json driver] ${JSON.stringify({ envelope: info.envelope, ...message }, null, 2)}`,
-		);
-		return mail.to.map((recipient) =>
-			deliveryResult.accepted(
-				recipient,
-				"json",
-				DELIVERY_ERROR.PRINTED_BY_JSON_DRIVER,
-				"relayed",
-			),
-		);
-	}
-
-	async close(): Promise<void> {
-		this.transporter.close();
-	}
-}
-
 export function createOutboundDriver(mta: NodeMailerMTA): OutboundDriver {
 	const { driver, relay, kumo, go } = env.outbound;
 	switch (driver) {
@@ -366,7 +340,5 @@ export function createOutboundDriver(mta: NodeMailerMTA): OutboundDriver {
 			return new KumoHttpDriver(kumo);
 		case OUTBOUND_DRIVER.GO:
 			return new GoMtaDriver(go);
-		case OUTBOUND_DRIVER.JSON:
-			return new JsonDriver();
 	}
 }
