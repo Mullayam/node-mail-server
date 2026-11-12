@@ -1,58 +1,75 @@
-import dns from "dns";
 import crypto from "crypto";
+import dns from "dns";
 import forge from "node-forge";
+import { RATE_LIMIT } from "../../config/constants";
+import { smtpReply } from "../../config/smtpMessages";
 
-const ipRequestCounts: Record<string, { count: number; timestamp: number }> =
-	{};
-const TEMP_BLOCK_DURATION = 60 * 1000; // 1-minute temporary block
-const tempBlockedIPs: Record<string, number> = {}; // Stores temporarily blocked IPs with unblock timestamps
-const blockedIps = new Map();
+interface IpState {
+	count: number;
+	windowStart: number;
+	blockedUntil: number;
+	strikes: number;
+	lastSeen: number;
+}
+
+const { BASE_BLOCK_MS, MAX_BLOCK_MS, STRIKE_RESET_MS, SWEEP_INTERVAL_MS } =
+	RATE_LIMIT;
+const ipStates = new Map<string, IpState>();
+
+setInterval(() => {
+	const now = Date.now();
+	for (const [ip, state] of ipStates) {
+		if (state.blockedUntil <= now && now - state.lastSeen > STRIKE_RESET_MS)
+			ipStates.delete(ip);
+	}
+}, SWEEP_INTERVAL_MS).unref();
+
 export class SpamFilteration {
-	static async checkBlackListIp(ip: string, thresold: number) {
-		// Check if the IP is permanently blocked
-		if (blockedIps.has(ip)) {
-			throw new Error(
-				"Your IP is permanently blocked due to excessive requests.",
-			);
-		}
+	static async checkBlackListIp(
+		ip: string,
+		threshold: number,
+		windowMs: number = RATE_LIMIT.WINDOW_MS,
+	) {
 		const now = Date.now();
+		let state = ipStates.get(ip);
+		if (!state) {
+			state = {
+				count: 0,
+				windowStart: now,
+				blockedUntil: 0,
+				strikes: 0,
+				lastSeen: now,
+			};
+			ipStates.set(ip, state);
+		}
+		if (now - state.lastSeen > STRIKE_RESET_MS) state.strikes = 0;
+		state.lastSeen = now;
 
-		// Check if the IP is temporarily blocked
-		if (tempBlockedIPs[ip] && tempBlockedIPs[ip] > now) {
-			// If the IP still sends messages while blocked, mark it as permanently blocked
-			const msg = `Remaining Count ${thresold - ipRequestCounts[ip]?.count||0} | Unblock time: ${Math.ceil((tempBlockedIPs[ip] - now) / 1000,)} seconds. Further abuse will lead to permanent blocking.`;
-
-
-			blockedIps.set(ip, now);
-			delete tempBlockedIPs[ip]; // Remove from temporary block list
-			delete ipRequestCounts[ip]; // Reset any stored request data
-			throw new Error(
-				"Your IP has been permanently blocked due to continued abuse. " + msg,
-			);
-		} else if (tempBlockedIPs[ip]) {
-			// If the temporary block duration has passed, remove the IP from temp block list
-			delete tempBlockedIPs[ip];
+		if (state.blockedUntil > now) {
+			throw smtpReply("RATE_LIMITED", {
+				ip,
+				seconds: Math.ceil((state.blockedUntil - now) / 1000),
+			}).toError();
 		}
 
-		// Rate limit check
-		if (!ipRequestCounts[ip]) {
-			ipRequestCounts[ip] = { count: 1, timestamp: now };
-		} else {
-			const { count, timestamp } = ipRequestCounts[ip];
+		if (now - state.windowStart >= windowMs) {
+			state.windowStart = now;
+			state.count = 0;
+		}
 
-			if (now - timestamp < 1000) {
-				ipRequestCounts[ip].count++;
-
-				if (ipRequestCounts[ip].count > thresold) {
-					tempBlockedIPs[ip] = now + TEMP_BLOCK_DURATION; // Temporarily block IP
-					delete ipRequestCounts[ip]; // Reset request count
-					throw new Error(
-						"Your IP has been temporarily blocked due to excessive requests.",
-					);
-				}
-			} else {
-				ipRequestCounts[ip] = { count: 1, timestamp: now }; // Reset count for a new time window
-			}
+		state.count++;
+		if (state.count > threshold) {
+			const blockMs = Math.min(
+				BASE_BLOCK_MS * 2 ** state.strikes,
+				MAX_BLOCK_MS,
+			);
+			state.blockedUntil = now + blockMs;
+			state.strikes++;
+			state.count = 0;
+			throw smtpReply("RATE_LIMITED", {
+				ip,
+				seconds: Math.ceil(blockMs / 1000),
+			}).toError();
 		}
 	}
 	checkRBL(ip: string): Promise<boolean> {
