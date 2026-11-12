@@ -94,5 +94,6 @@ interface DeliveryResult {
 
 ## Related
 
-- The [outbound queue](/docs/guides/sending-mail#the-outbound-queue) uses `temporary` to decide whether to retry.
+- The [outbound queue](/docs/guides/sending-mail#the-outbound-queue) uses `temporary` to decide whether to retry. The `direct` and `relay` [drivers](/docs/guides/outbound-drivers) call this class, and the `go` and `kumo-http` drivers return the same result format.
+- A bounce report for a failed recipient is handled by the [bounce server](/docs/guides/bounces).
 - [Environment variables](/docs/reference/environment-variables) lists the relay settings.

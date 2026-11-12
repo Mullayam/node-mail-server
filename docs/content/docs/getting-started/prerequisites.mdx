@@ -24,7 +24,15 @@ A mail server is judged by other mail servers from the first message. Get these 
 | 587 | Mail clients and apps submit mail to your server (SMTP with authentication). |
 | 465 | Allow it in the firewall if you plan to use implicit-TLS submission. |
 
-Allow these ports in your firewall. Some cloud providers block outbound port 25 by default, so ask them to lift the block if direct delivery fails.
+These ports are used inside your network and normally stay closed to the internet. See [Security](/docs/deployment/security#open-only-the-ports-you-need).
+
+| Port | Used for |
+|------|----------|
+| 2525 | The [bounce SMTP server](/docs/guides/bounces). Only needed behind a forwarder, because bounces for your bounce domain already arrive on port 25. |
+| 8025 | The bounce HTTP server. KumoMTA posts delivery events here. |
+| 8080 | The [JSON send API](/docs/guides/json-api). Your own apps call it. |
+
+Allow ports 25 and 587 in your firewall. Some cloud providers block outbound port 25 by default, so ask them to lift the block if direct delivery fails.
 
 ## Hostnames
 

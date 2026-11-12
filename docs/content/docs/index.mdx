@@ -1,9 +1,9 @@
 ---
 title: NodeMailServer
-description: A self-hosted mail stack that receives mail on port 25, sends it from port 587 and serves mailboxes over IMAP.
+description: A self-hosted mail stack that receives mail on port 25, sends it from port 587 or a JSON API, handles bounces and serves mailboxes over IMAP.
 ---
 
-NodeMailServer started as a fun experiment and has grown into a small mail platform you run yourself. It receives mail for your domains, checks who sent it, accepts mail from your own apps and mail clients, and delivers it to the rest of the internet.
+NodeMailServer started as a fun experiment and has grown into a small mail platform you run yourself. It receives mail for your domains, checks who sent it, accepts mail from your own apps and mail clients, delivers it to the rest of the internet, and processes the bounces that come back.
 
 <Callout title="Under development" type="warn">
   Receiving and sending mail are implemented. Mailbox storage and IMAP are still being built, and some plugins are not connected to the mail pipeline yet. Each page says what is ready and what is not.
@@ -13,8 +13,10 @@ NodeMailServer started as a fun experiment and has grown into a small mail platf
 
 | Part | Folder | Port | What it does |
 |------|--------|------|--------------|
-| Mail server (Node + TypeScript) | `server/` | 25 and 587 | Receives mail on 25 and checks it with DKIM, SPF and DMARC. Accepts authenticated mail on 587, signs it with DKIM and queues it for delivery. |
-| Sending MTA (KumoMTA) | `outbound/` | 587 | Optional delivery engine with SMTP AUTH, per-domain rate limits, DKIM and delivery webhooks. |
+| Mail server (Node + TypeScript) | `server/` | 25 and 587 | Receives mail on 25 and checks it with rules you set in JSON. Accepts authenticated mail on 587 or through the JSON API, signs it with DKIM and queues it for delivery. |
+| Bounce server and JSON API | `server/` | 2525, 8025 and 8080 | Reads bounce reports, keeps a suppression list, and sends mail from one HTTP request. Both are off until you set a token. |
+| Go MTA | `server/go-mta/` | 2580 | Optional delivery service written in Go. |
+| Sending MTA (KumoMTA) | `outbound/` | 587 | Optional delivery engine with SMTP AUTH, per-domain rate limits, DKIM and delivery webhooks. The Node server can use it through SMTP or its HTTP API. |
 | IMAP server (Go + Gluon) | `server/imap/` | 143 | Lets mail clients read mailboxes. Work in progress. |
 | Documentation | `docs/` | 3000 | This site. |
 
@@ -26,9 +28,14 @@ Receiving
                                       ──▶ ARC seal ──▶ PGP encryption ──▶ store
 
 Sending
-  Mail client or app ──587 + AUTH──▶ OutgoingServer ──▶ DKIM sign ──▶ outbound queue
-                                      ──▶ recipient's MX server
-                                      ──▶ or a relay such as KumoMTA
+  Mail client or app ──587 + AUTH──▶ OutgoingServer ──┐
+  Your app ──HTTP + token──▶ JSON send API ──────────┴──▶ headers ──▶ DKIM sign ──▶ outbound queue
+                                      ──▶ recipient's MX server (Node or Go MTA)
+                                      ──▶ or KumoMTA, by SMTP or HTTP
+
+Bounces
+  Remote server ──▶ bounce+<id>@your bounce domain ──▶ DSN processor
+                                      ──▶ suppression list, sender notice, webhook
 ```
 
 ## Where to start
@@ -48,6 +55,15 @@ Sending
   </Card>
   <Card title="Sending mail" href="/docs/guides/sending-mail">
     Submission on port 587, the outbound queue and retries.
+  </Card>
+  <Card title="JSON send API" href="/docs/guides/json-api">
+    Send a message with one HTTP request.
+  </Card>
+  <Card title="Bounces" href="/docs/guides/bounces">
+    Return addresses, the DSN processor and the suppression list.
+  </Card>
+  <Card title="Configuration files" href="/docs/reference/configuration-files">
+    Turn checks on or off and change every SMTP reply, without a restart.
   </Card>
   <Card title="KumoMTA" href="/docs/outbound/overview">
     Use KumoMTA as the sending engine.

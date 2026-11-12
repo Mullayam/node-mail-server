@@ -22,6 +22,15 @@ client ──587 + AUTH──▶ KumoMTA ──▶ queue (one per recipient doma
 3. It delivers from one of your outbound IP addresses, at a rate set for each provider, and retries temporary failures.
 4. Every delivery, bounce and delay is posted to your webhook as JSON.
 
+## Use it from the Node server
+
+The Node server can send its queued mail through KumoMTA, so Node keeps ports 25 and 587 and KumoMTA stays on the private network:
+
+- `OUTBOUND_DRIVER=relay` submits over SMTP. KumoMTA needs the Node server in `relay_hosts`, or a login.
+- `OUTBOUND_DRIVER=kumo-http` posts to KumoMTA's HTTP API. KumoMTA needs the Node server in `trusted_hosts` on its HTTP listener.
+
+KumoMTA's delivery events can be posted back to the Node server's [bounce HTTP server](/docs/guides/bounces#kumomta-events). See [Outbound drivers](/docs/guides/outbound-drivers#what-kumomta-needs) for what each driver sends.
+
 ## Files
 
 Everything KumoMTA reads is in `outbound/policy/`. The folder is mounted read-only at `/opt/kumomta/etc/policy`, so your `.env` file never enters the container.

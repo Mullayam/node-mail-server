@@ -76,12 +76,17 @@ See [Docker Compose](/docs/deployment/docker-compose) for what each service does
 
 ## What starts
 
-Starting the server opens two SMTP listeners:
+Starting the server loads `server/config/mail.config.json` and `server/config/smtp-messages.json`, then opens these listeners:
 
-| Listener | Port | Role |
-|----------|------|------|
-| `IncomingServerConfig` | 25 | Receives mail for your domains. |
-| `OutgoingServerConfig` | 587 | Accepts authenticated mail for delivery. |
+| Listener | Port | Role | Starts when |
+|----------|------|------|-------------|
+| `IncomingServerConfig` | 25 | Receives mail for your domains. | Always |
+| `OutgoingServerConfig` | 587 | Accepts authenticated mail for delivery. | Always |
+| `BounceServerConfig` | 2525 | Receives bounce reports. | `BOUNCE_SMTP_PORT` is not `0` |
+| `BounceWebhookServerConfig` | 8025 | KumoMTA events and the suppression list. | `BOUNCE_WEBHOOK_TOKEN` is set |
+| `ApiServerConfig` | 8080 | The [JSON send API](/docs/guides/json-api). | `MAIL_API_TOKEN` is set |
+
+Mail is delivered directly from this machine unless you set `OUTBOUND_DRIVER`. See [Outbound drivers](/docs/guides/outbound-drivers). The config files are described in [Configuration files](/docs/reference/configuration-files).
 
 ## Next
 
@@ -91,5 +96,8 @@ Starting the server opens two SMTP listeners:
   </Card>
   <Card title="Environment variables" href="/docs/reference/environment-variables">
     Every setting, with defaults.
+  </Card>
+  <Card title="Configuration files" href="/docs/reference/configuration-files">
+    Checks, limits, queue and every SMTP reply.
   </Card>
 </Cards>

@@ -90,6 +90,17 @@ v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc-reports@example.com; ruf=mailt
 
 Create the two report mailboxes (or change the addresses) so you receive the reports. Start with `p=none` or `p=quarantine` and move to `p=reject` when your reports are clean.
 
+## Bounce domain
+
+Only needed when you set `BOUNCE_DOMAIN` (see [Bounces](/docs/guides/bounces)). Pick a name such as `bounces.example.com` and give it:
+
+| Type | Name | Value |
+|------|------|-------|
+| `MX` | `bounces.example.com` | `10 mx.example.com`, the server that receives your mail. |
+| `TXT` | `bounces.example.com` | `v=spf1 ip4:YOUR_IP ~all` |
+
+Return addresses look like `bounce+<id>@bounces.example.com`. Remote servers send their failure reports there, to port 25. The `TXT` record matters because receivers check SPF against the envelope sender, and from now on that is the bounce domain.
+
 ## Verify
 
 After DNS has propagated, check everything with [MXToolbox](https://mxtoolbox.com/diagnostic.aspx). See [Testing](/docs/getting-started/testing).

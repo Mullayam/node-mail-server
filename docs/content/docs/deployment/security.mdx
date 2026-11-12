@@ -16,7 +16,7 @@ The root `.gitignore` excludes these files. Commit only the `.example` versions.
 | `relay/policy/users.lua` | Relay passwords and webhook secrets, in plain text. |
 | `server/records.json` | Generated DNS records and the DKIM private key. |
 | `*.key`, `*.pem`, `outbound/dkim/`, `relay/dkim/`, `relay/tls/` | Private keys and certificates. |
-| `server/spool/` | Queued mail. |
+| `server/spool/` | Queued mail, bounce tracking records and the suppression list. |
 
 If a secret was ever committed, treat it as exposed: rotate it, not just delete the file.
 
@@ -27,6 +27,10 @@ If a secret was ever committed, treat it as exposed: rotate it, not just delete 
 | 25 | Yes, to receive mail. |
 | 587 | Yes, if clients outside your network send through the server. |
 | 2587 | Yes, if you run the [relay](/docs/outbound/relay). Every message needs a login. Use a real TLS certificate. |
+| 2525 | **No**, unless a forwarder on another host must reach it. Bounces for `BOUNCE_DOMAIN` already arrive on port 25. Set `BOUNCE_SMTP_PORT=0` to turn it off. |
+| 8025 | **No.** The bounce HTTP server. It needs `BOUNCE_WEBHOOK_TOKEN`. Publish it only to the KumoMTA network, and put TLS in front of it if it crosses hosts. |
+| 8080 | **No**, unless your apps are outside the network. The [JSON send API](/docs/guides/json-api) can send mail with any `From` address, and its token is the only protection. Use a TLS reverse proxy. |
+| 2580 | **No.** The [Go MTA](/docs/guides/outbound-drivers#go-mta). Only the Node server calls it. |
 | 143 | Only if you run IMAP. Prefer TLS (993). |
 | 8000 | **No.** KumoMTA's HTTP API can inject mail. It listens on `127.0.0.1` inside the container, and the compose file does not publish it. |
 | 8008 | **No.** The KumoMTA traffic-shaping daemon, if you run it. |
@@ -35,6 +39,9 @@ If a secret was ever committed, treat it as exposed: rotate it, not just delete 
 ## Protect your sending reputation
 
 - Require authentication on every submission port, and use strong passwords.
+- Use long random values for `MAIL_API_TOKEN`, `BOUNCE_WEBHOOK_TOKEN` and `GO_MTA_TOKEN`. The JSON API and the bounce HTTP server do not start without their token. The Go MTA starts without one and only logs a warning, so always set it.
+- Keep `OUTBOUND_RELAY_TLS` at `verify`. Use `none` only on a private network you control.
+- Keep `bounces.suppression.enabled` on, so the server stops sending to addresses that hard-bounce.
 - Do not run an open relay. Check it with an external open-relay test after any change to relay settings.
 - Keep rate limits on (`MAX_EMAILS_PER_MINUTE`, and the per-domain rates in KumoMTA).
 - Watch your DMARC reports, and tighten the policy as they come back clean.
