@@ -1,0 +1,98 @@
+---
+title: NodeMailerMTA API
+description: Send mail from code with direct delivery or a relay, and read the per-recipient results.
+---
+
+`NodeMailerMTA` (`server/src/server/mta/node-mta.ts`) is the delivery engine behind the outgoing server. You can also use it directly from your own code. It has two modes.
+
+## Direct delivery
+
+Resolves the recipient's MX records and delivers to them over DNS.
+
+```ts
+import { NodeMailerMTA } from "./server/mta/node-mta";
+
+const mta = new NodeMailerMTA();
+
+const results = await mta.sendMail({
+  from: "sender@yourdomain.com",
+  to: ["user@gmail.com", "user@yahoo.com", "other@gmail.com"],
+  subject: "Hello",
+  html: "<p>Hello World</p>",
+  // DKIM signing (recommended, prevents rejection)
+  dkim: {
+    domainName: "yourdomain.com",
+    keySelector: "default",
+    privateKey: process.env.DKIM_PRIVATE_KEY,
+  },
+  // DSN (Delivery Status Notification)
+  dsn: {
+    notify: ["FAILURE", "DELAY"],
+    returnHeaders: true, // headers only (lighter than the full message)
+  },
+});
+
+// results is DeliveryResult[], one entry per recipient
+for (const r of results) {
+  console.log(`${r.recipient}: ${r.success ? "delivered" : r.error}`);
+}
+```
+
+### How it works
+
+1. Builds the RFC 5322 message **once**, using nodemailer's `streamTransport`, and signs it with DKIM.
+2. Groups the recipients by domain.
+3. Resolves the MX records of all domains **in parallel**, with TTL-based caching.
+4. Probes ports 25, 587 and 465 **in parallel** on each MX host.
+5. Delivers to all domains **in parallel**, using a single TCP connection per domain.
+
+## Relay delivery (smarthost)
+
+Sends everything through one relay server, such as KumoMTA.
+
+```ts
+const results = await mta.sendViaRelay("smtp.relay.com", 587, {
+  from: "sender@yourdomain.com",
+  to: ["user@example.com"],
+  subject: "Via relay",
+  text: "Relayed message",
+  auth: { user: "relay_user", pass: "relay_pass" },
+  dkim: { domainName: "yourdomain.com", keySelector: "default", privateKey: "..." },
+  dsn: { notify: ["SUCCESS", "FAILURE"] },
+});
+```
+
+## DeliveryResult
+
+Both methods return `DeliveryResult[]`.
+
+```ts
+interface DeliveryResult {
+  success: boolean;           // true if accepted by the remote MX
+  temporary: boolean;         // true for 4xx and network errors that should be retried
+  recipient: string;          // email address
+  response?: string;          // SMTP response string
+  error?: string;             // error message if it failed
+  dsn?: {
+    status: string;           // for example "2.0.0", "5.1.2", "4.0.0"
+    action: "delivered" | "failed" | "delayed" | "relayed" | "expanded";
+    diagnosticCode?: string;  // remote server diagnostic
+    remoteMta?: string;       // the MX host that handled delivery
+    finalRecipient: string;   // RFC 5321 recipient
+  };
+}
+```
+
+## DSN status codes
+
+| Code | Meaning |
+|------|---------|
+| `2.0.0` | Successfully delivered. |
+| `4.0.0` | Temporary failure. Retry later. |
+| `5.0.0` | Permanent failure. The message was rejected. |
+| `5.1.2` | No MX records, or the domain cannot be reached. |
+
+## Related
+
+- The [outbound queue](/docs/guides/sending-mail#the-outbound-queue) uses `temporary` to decide whether to retry.
+- [Environment variables](/docs/reference/environment-variables) lists the relay settings.
