@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  IMAP server configuration (Gluon). Copy to imap.xml (gitignored) and edit.
+
+  Apply changes to the running server without a restart:
+
+      docker compose -f deploy/docker-compose.yml exec imap imapctl reload
+
+  An invalid file is refused and the old configuration stays live. Changes to
+  listen, data dir, directory kind or storage engine need a container restart;
+  reload tells you when.
+-->
+<imap>
+  <settings>
+    <listen address="0.0.0.0:143"/>
+    <!-- Gluon's own data and database. GLUON_DIR overrides it. -->
+    <data dir="/data/gluon"/>
+    <!--
+      TLS: with a certificate and key, the server also listens on 993 with
+      implicit TLS and offers STARTTLS on 143. After a certificate renewal,
+      run "imapctl reload": new connections use the new certificate.
+    -->
+    <!-- <tls cert="/etc/ssl/imap/fullchain.pem" key="/etc/ssl/imap/privkey.pem" listen="0.0.0.0:993"/> -->
+  </settings>
+
+  <!--
+    Who the users are. kind="file" reads users.xml; kind="postgres" is a
+    placeholder. Every other attribute is passed to the kind as an option.
+  -->
+  <directory kind="file" source="/etc/imap/users.xml"/>
+  <!-- <directory kind="postgres" dsn="postgres://user:pass@db/mail"/> -->
+
+  <!--
+    Where the mail lives. "pebble" is the key-value engine on disk and is
+    fully implemented. "memory" is the same engine in memory (lost on
+    restart). "dir" and "postgres" are placeholders to implement.
+  -->
+  <storage engine="pebble" path="/data/mail"/>
+  <!-- <storage engine="memory"/> -->
+  <!-- <storage engine="postgres" dsn="postgres://user:pass@db/mail"/> -->
+
+  <!-- Default mailbox limit. A user can override it in users.xml. -->
+  <quota storage="1GB" messages="50000"/>
+</imap>

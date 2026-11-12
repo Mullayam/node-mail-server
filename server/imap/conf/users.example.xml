@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Users for <directory kind="file">. Copy to users.xml (gitignored) and edit.
+
+  Every user here is an SMTP user. IMAP works for a user only when
+  imap="true", set on the user or as the default on its domain.
+  After editing:  imapctl reload
+
+  Passwords are plain text in this prototype. Use placeholders only for
+  testing, and point a real directory kind at your SMTP user store before
+  going live.
+-->
+<users>
+  <domain name="example.com" imap="true">
+    <!-- inherits imap="true" from the domain, with its own quota -->
+    <user id="user1" password="change-me" quota-storage="2GB" quota-messages="100000"/>
+    <!-- SMTP only: can send, cannot use IMAP -->
+    <user id="noreply" password="change-me" imap="false"/>
+  </domain>
+
+  <!-- IMAP is off by default here: turn it on per user -->
+  <domain name="example.org">
+    <user id="alice" password="change-me" imap="true"/>
+    <user id="bob" password="change-me"/>
+  </domain>
+</users>
