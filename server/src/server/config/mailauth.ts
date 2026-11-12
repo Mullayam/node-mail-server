@@ -3,7 +3,7 @@ import { readFileSync } from "fs"
 import { join } from "path"
  
 import { DNSChecker } from "@/server/config/DnsChecker"
-import { RFC5322MailComposer } from "./mail.composer"
+import { RFC5322MailComposer } from "./MailComposer"
 type ARC_OPTIONS = {
     headers: Record<string, string>,
 
