@@ -1,0 +1,71 @@
+---
+title: Sending mail
+description: Submit mail on port 587, how the outbound queue retries, and how mail is delivered directly or through a relay.
+---
+
+Mail clients and your own apps send mail by connecting to the outgoing server on port 587 with authentication.
+
+## Connect a client or app
+
+| Setting | Value |
+|---------|-------|
+| Server | Your `OUTGOING_MAIL_HOST`, for example `mail.example.com` |
+| Port | 587 |
+| Authentication | Required. `LOGIN` is supported. `XOAUTH2` is rejected. |
+
+## The pipeline
+
+When a client submits mail on port 587:
+
+1. **AUTH.** LOGIN authentication is required.
+2. **MAIL FROM.** Validates the sender and checks for relay.
+3. **RCPT TO.** Logs each recipient.
+4. **DATA.** Processes the message:
+   - Recipients come only from the SMTP envelope (the `RCPT TO` commands), so Bcc works and is never shown to other recipients.
+   - Any `Bcc:` header is removed. The rest of the message is left unchanged.
+   - The message is signed with DKIM, written to the outbound queue, and the server replies `250 Message queued as <id>`.
+
+## The outbound queue
+
+Queued mail is kept in `MAIL_SPOOL_DIR`, so it survives a restart. Each recipient is tracked on its own:
+
+| Result | What happens |
+|--------|--------------|
+| Delivered | Removed from the queue. |
+| Permanent failure (`5xx`) | Removed and logged. |
+| Temporary failure (`4xx`, timeout, connection refused) | Retried after 1, 5, 15, 30, 60 and 120 minutes, then every 240 minutes, until `MAIL_QUEUE_MAX_AGE_HOURS` has passed. |
+
+## How mail is delivered
+
+Delivery goes to one of two places:
+
+- **Directly** to the recipient's MX server. This is the default.
+- **Through a relay** (smarthost) such as [KumoMTA](/docs/outbound/overview), when `OUTBOUND_RELAY_HOST` is set.
+
+### MTA-STS
+
+Direct delivery follows the recipient domain's MTA-STS policy. In `enforce` mode the server requires TLS with a valid certificate and only uses an MX host that the policy allows. Relay connections always verify the certificate, except on loopback.
+
+### Relay settings
+
+```env
+OUTBOUND_RELAY_HOST=
+OUTBOUND_RELAY_PORT=587
+OUTBOUND_RELAY_USER=
+OUTBOUND_RELAY_PASS=
+OUTBOUND_RELAY_CA_PATH=
+```
+
+`OUTBOUND_RELAY_CA_PATH` is optional. Use it when the relay's certificate is signed by your own certificate authority.
+
+## Programmatic use
+
+The delivery engine is the `NodeMailerMTA` class. See the [NodeMailerMTA API](/docs/reference/node-mta-api) for `sendMail`, `sendViaRelay` and the result format.
+
+## Components involved
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `OutgoingMailHandler` | `server/src/services/OutgoingMailHandler.ts` | Authentication, parsing and queueing. |
+| `NodeMailerMTA` | `server/src/server/mta/node-mta.ts` | Builds the message, signs with DKIM, resolves MX records and delivers. |
+| `MailComposer` | `server/src/server/config/MailComposer.ts` | RFC 5322 headers and MIME. |
