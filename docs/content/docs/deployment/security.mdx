@@ -1,0 +1,44 @@
+---
+title: Security
+description: Keep secrets out of git, lock down the ports and protect your DKIM keys.
+---
+
+## Keep secrets out of git
+
+The root `.gitignore` excludes these files. Commit only the `.example` versions.
+
+| File | Contains |
+|------|----------|
+| `server/.env` | Hostnames, TLS paths, DKIM and PGP keys. |
+| `outbound/.env` | KumoMTA settings and keys for the DKIM and webhook services. |
+| `outbound/policy/users.lua` | SMTP usernames and passwords, in plain text. |
+| `server/records.json` | Generated DNS records and the DKIM private key. |
+| `*.key`, `*.pem`, `outbound/dkim/` | Private keys and certificates. |
+| `server/spool/` | Queued mail. |
+
+If a secret was ever committed, treat it as exposed: rotate it, not just delete the file.
+
+## Open only the ports you need
+
+| Port | Open to the internet? |
+|------|-----------------------|
+| 25 | Yes, to receive mail. |
+| 587 | Yes, if clients outside your network send through the server. |
+| 143 | Only if you run IMAP. Prefer TLS (993). |
+| 8000 | **No.** KumoMTA's HTTP API can inject mail. It listens on `127.0.0.1` inside the container, and the compose file does not publish it. |
+| 8008 | **No.** The KumoMTA traffic-shaping daemon, if you run it. |
+| 6379 | **No.** Redis is not published in the compose file. |
+
+## Protect your sending reputation
+
+- Require authentication on every submission port, and use strong passwords.
+- Do not run an open relay. Check it with an external open-relay test after any change to relay settings.
+- Keep rate limits on (`MAX_EMAILS_PER_MINUTE`, and the per-domain rates in KumoMTA).
+- Watch your DMARC reports, and tighten the policy as they come back clean.
+- Check your IP address against blacklists regularly.
+
+## DKIM keys
+
+- Generate one key per domain, and rotate them from time to time by publishing a new selector first.
+- Do not email private keys or paste them into chats.
+- Store the DKIM private key in `DKIM_PRIVATE_KEY`, a mounted key file, or a secrets service. Never put it in the repository.
