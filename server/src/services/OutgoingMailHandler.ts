@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import type {
 	SMTPServerAddress,
 	SMTPServerAuthentication,
@@ -6,16 +5,13 @@ import type {
 	SMTPServerDataStream,
 	SMTPServerSession,
 } from "smtp-server";
-import { HEADER } from "../config/constants";
-import { env } from "../config/env";
 import { mailConfig } from "../config/mailConfig";
 import { smtpReply } from "../config/smtpMessages";
 import { MiscellaneousHelper } from "../lib/helpers";
-import { collectMessage, RawMessage } from "../lib/helpers/RawMessage";
+import { collectMessage } from "../lib/helpers/RawMessage";
 import { toSmtpError } from "../lib/helpers/smtpErrors";
 import { Logging } from "../lib/logs";
-import { mailWorkers } from "../lib/workers";
-import { getMailRuntime } from "../server/mta/runtime";
+import { submitOutgoing } from "./OutgoingPipeline";
 
 class OutgoingMailHandler {
 	async HandleAuthenticate(
@@ -151,50 +147,12 @@ class OutgoingMailHandler {
 				return callback(smtpReply("NO_VALID_RECIPIENTS").toError());
 			}
 
-			const { queue, bounces } = getMailRuntime();
-			const queueId = randomUUID();
-			const raw = RawMessage.prependHeaders(
-				RawMessage.stripHeaders(
-					message,
-					(name) =>
-						name.toLowerCase() === "bcc" ||
-						name.toLowerCase() === HEADER.QUEUE_ID.toLowerCase(),
-				),
-				`${HEADER.QUEUE_ID}: ${queueId}\r\n`,
-			);
-
-			const dkimDomain = sender.split("@")[1];
-			const dkimKey = env.dkim.privateKey;
-			const signed =
-				config.dkimSign && dkimKey && dkimDomain
-					? await mailWorkers.dkimSign({
-							raw,
-							dkim: {
-								domainName: dkimDomain,
-								keySelector: env.dkim.selector,
-								privateKey: dkimKey,
-							},
-							envelope: { from: sender, to: recipients },
-						})
-					: raw;
-
-			const returnPath = await bounces.prepareReturnPath(
-				queueId,
+			const queueId = await submitOutgoing({
 				sender,
 				recipients,
-			);
-			await queue.enqueue({
-				id: queueId,
-				from: returnPath,
-				sender,
-				recipients,
-				raw: signed,
-				dsn: { notify: ["FAILURE", "DELAY"], returnHeaders: true },
+				raw: message,
+				source: `smtp ${session.remoteAddress}:${session.remotePort}`,
 			});
-
-			Logging.dev(
-				`Outgoing mail queued id = ${queueId} driver = ${queue.driverName} localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${sender} to ${recipients.join(",")}`,
-			);
 
 			return callback(null, smtpReply("MESSAGE_QUEUED", { id: queueId }).text);
 		} catch (error) {
