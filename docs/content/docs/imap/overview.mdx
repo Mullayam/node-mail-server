@@ -1,61 +1,190 @@
 ---
 title: IMAP overview
-description: Mailbox access with ProtonMail's Gluon library. Work in progress.
+description: Mailbox access with ProtonMail's Gluon, mail stored in Pebble, TLS on 993, and config reloads without a restart.
 ---
 
-IMAP lets mail clients such as Thunderbird, Outlook and mobile apps read the mail your server receives. This part of the project is under development.
+IMAP lets mail clients such as Thunderbird, Outlook and mobile apps read your mail. The server in `server/imap` is built on [Gluon](https://github.com/ProtonMail/gluon), Proton's IMAP library, and stores mail in [Pebble](https://github.com/cockroachdb/pebble), a key-value database modelled on RocksDB.
 
-<Callout title="Work in progress" type="warn">
-  The IMAP server does not build yet. `server/imap/go.mod` lists no requirements, and the import paths in `main.go` do not match the folders. Treat this page as the design.
+<Callout title="What works and what does not yet" type="warn">
+  Logins, the per-user IMAP switch, TLS, storing mail (APPEND, folders, flags, moves), quotas and reload all work. Mail that arrives on port 25 is not written into IMAP storage yet, and the `file` user directory cannot be edited from the command line. Passwords are plain text.
 </Callout>
 
-## Why Gluon
+## Who can use IMAP
 
-[Gluon](https://github.com/ProtonMail/gluon) is Proton's IMAP server library, written in Go. It is a library, not a ready-made server: you embed it in a Go program and give it a connector that reads and writes mail from your own storage. Gluon handles the IMAP protocol itself, such as sessions, mailboxes, UIDs, flags and IDLE.
+Every user in the directory is an SMTP user. IMAP works for a user only when IMAP is enabled for them. Users without it cannot log in over IMAP, even with the right password.
 
-It is used instead of Dovecot because:
+At start-up, and after every reload, the server loads the IMAP-enabled users into Gluon and unloads everyone else. Turning IMAP off for a user ends their access as soon as you reload.
 
-- It is a single Go binary, with no system users, Maildir folders or file permissions to manage.
-- Mail stays in your own database and pipeline, including the PGP-encrypted store.
-- Users, authentication and mailboxes are controlled from code, not from Dovecot config files.
+## How it is built
 
-Dovecot is not used. The notes in `server/imap/dovecot.md` are kept for reference only.
+Each part is a separate package with a small interface, so you can replace any of them.
 
-## How it fits
-
-```text
-Sender ──▶ SMTP :25 (Node, IncomingMailHandler) ──▶ database / mail store
-                                                          ▲
-Mail client ◀──▶ IMAP :143 (Go, Gluon) ◀── connector (core/connector/db.go)
-```
-
-The SMTP server stores incoming mail. The Gluon connector reads that store and pushes new messages to Gluon, so they appear in the user's mail client.
-
-## Folder layout
-
-| File | Purpose |
-|------|---------|
-| `server/imap/main.go` | Starts the Gluon server, reads the environment and listens for IMAP connections. |
-| `server/imap/core/factory.go` | Loads the users and registers each one with Gluon. |
-| `server/imap/core/connector/db.go` | The Gluon connector, backed by the SQL database. |
-| `server/imap/core/consts/init.go` | Default values. |
+| Part | Package | What it does |
+|------|---------|--------------|
+| Gluon server | `main.go`, `core/` | Starts Gluon and loads the IMAP-enabled users (`core/factory.go`). The per-user connector (`core/connector/db.go`) implements all 16 methods of Gluon's `connector.Connector`, and a compile-time check fails the build if Gluon adds one. |
+| Config | `internal/conf` | Reads `imap.xml`: listen address, TLS, data dir, directory kind, storage engine, default quota. |
+| Users | `internal/directorykind` | The user list. Backends are called kinds: `file` (`users.xml`) and `postgres` (placeholder). |
+| Quota | `internal/quota` | Default and per-user limits. Refuses a new message that would go over the limit. |
+| Storage | `internal/storage` | Where mail lives. The `pebble` engine is complete. `memory` is the same engine in RAM. `dir` and `postgres` are placeholders. |
+| Key-value layer | `internal/storage/kv` | `Get`, `Set`, `Delete`, prefix `Scan` and atomic `Batch`, with Pebble and in-memory drivers. |
+| TLS | `internal/tlscert` | Holds the live certificate for 993 and STARTTLS, and swaps it on reload. |
+| Router | `internal/router` | The admin commands: reload, status, user add/update/delete/list/get, quota get/set. |
+| Control | `internal/control`, `cmd/imapctl` | Carries router commands over a Unix socket inside the container. |
 
 ## Configuration
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `GLUON_DIR` | none | Folder for Gluon's local data and database cache. |
-| `GLUON_HOST` | `localhost:143` | Address and port to listen on. |
-| `GLUON_LOG_LEVEL` | unset | Log level, for example `debug`. |
+Two files, both gitignored. Start from the examples in `server/imap/conf/`:
 
-`main.go` also accepts the flags `-profile-cpu`, `-profile-mem`, `-profile-lock` and `-profile-path` for profiling.
+```bash
+cp server/imap/conf/imap.example.xml server/imap/conf/imap.xml
+cp server/imap/conf/users.example.xml server/imap/conf/users.xml
+```
+
+`imap.xml` says how the server is put together:
+
+```xml
+<imap>
+  <settings>
+    <listen address="0.0.0.0:143"/>
+    <data dir="/data/gluon"/>
+    <tls cert="/etc/ssl/imap/fullchain.pem" key="/etc/ssl/imap/privkey.pem" listen="0.0.0.0:993"/>
+  </settings>
+  <directory kind="file" source="/etc/imap/users.xml"/>
+  <storage engine="pebble" path="/data/mail"/>
+  <quota storage="1GB" messages="50000"/>
+</imap>
+```
+
+Any extra attribute on `directory` or `storage` is passed to that backend as an option, for example `dsn="..."` for Postgres.
+
+`users.xml` lists the users for the `file` kind:
+
+```xml
+<users>
+  <domain name="example.com" imap="true">
+    <user id="user1" password="change-me" quota-storage="2GB"/>
+    <user id="noreply" password="change-me" imap="false"/>
+  </domain>
+  <domain name="example.org">
+    <user id="alice" password="change-me" imap="true"/>
+    <user id="bob" password="change-me"/>
+  </domain>
+</users>
+```
+
+The login name is `user@domain`. `imap` on a domain is the default for its users, and `imap` on a user overrides it. `quota-storage` and `quota-messages` on a user override the default quota.
+
+## TLS and port 993
+
+Put your certificate chain and key in `server/imap/tls/` as `fullchain.pem` and `privkey.pem` (the folder is gitignored and mounted at `/etc/ssl/imap`), then enable the `<tls>` line in `imap.xml`. With TLS set:
+
+- The server listens on **993** with implicit TLS.
+- Port 143 offers **STARTTLS**.
+- TLS 1.2 is the minimum.
+
+After a renewal, for example with Let's Encrypt, run `imapctl reload`. New connections get the new certificate, and `imapctl status` shows its expiry date. If the new files are invalid, the old certificate stays.
+
+In the compose file, 993 is published on all interfaces and 143 on `127.0.0.1` only. Nothing answers on 993 until `<tls>` is set.
+
+## Storage
+
+The `pebble` engine keeps every account's mailboxes, messages, flags and usage in one Pebble database under `/data/mail`. Every write is synced to disk before IMAP answers, and a message stays on disk across restarts.
+
+It is built from a small key-value layer, `internal/storage/kv`, that any database can sit under:
+
+| Function | Purpose |
+|----------|---------|
+| `Get`, `Set`, `Delete` | One key. |
+| `Scan(prefix, fn)` | Every key under a prefix, in order. |
+| `Batch(fn)` | Several writes applied together, or none. |
+| `Key(parts...)`, `Prefix(parts...)` | Build keys from parts, so `a`+`bc` and `ab`+`c` never collide. |
+| `GetJSON`, `SetJSON` | Typed values stored as JSON. |
+| `Keys`, `DeletePrefix`, `Has` | Helpers built on the above. |
+
+The engine stores, per account: mailboxes, message metadata, message bodies, which mailboxes each message is in (both directions), and the usage for quotas. A message can be in several mailboxes. When it leaves the last one, its body is deleted and the usage goes down.
+
+To put another database under the same engine, implement `kv.Store` (six methods) and register an engine that calls `storage.NewKVEngine(yourStore)`.
+
+## Reload without a restart
+
+After editing a config file or renewing a certificate:
+
+```bash
+docker compose -f deploy/docker-compose.yml exec imap imapctl reload
+```
+
+`imapctl reloadxml` does the same. `docker kill -s HUP <container>` also triggers a reload.
+
+A reload re-reads `imap.xml`, then the TLS certificate, then `users.xml`, then brings Gluon in line. It prints what changed:
+
+```json
+{
+  "conf": { "generation": 2, "quota_changed": false },
+  "tls_expires": "2027-02-10T23:29:42Z",
+  "gluon": { "added": ["bob@example.org"], "loaded": ["alice@example.org", "bob@example.org", "user1@example.com"] },
+  "imap_enabled": 3,
+  "users": 4
+}
+```
+
+If a file is invalid, that part keeps its old version, and `imapctl` exits with code 1 and says why. A change to the listen addresses, data dir, directory kind or storage engine needs a container restart, and the reload output says so.
+
+## Admin commands
+
+All of them go through `imapctl` in the container:
+
+| Command | What it does |
+|---------|--------------|
+| `imapctl status` | Config generation, users, IMAP-enabled users, default quota, TLS expiry. |
+| `imapctl routes` | Every command the server knows. |
+| `imapctl user list` / `user get <address>` | Show users. Passwords are never returned. |
+| `imapctl user add <address> -password-stdin -imap=true` | Add a user. A stub for the `file` kind. |
+| `imapctl user update <address> -imap=false` | Change a user. A stub for the `file` kind. |
+| `imapctl user delete <address>` | Delete a user. A stub for the `file` kind. |
+| `imapctl quota get <address>` | The user's limit, where it comes from, and current usage. |
+| `imapctl quota set <address> -storage 2GB` | Set a user's own limit. A stub for the `file` kind. |
+
+For the `file` kind, edit `users.xml` and reload instead. A directory kind that can write, such as a real Postgres kind, makes these commands work without changing anything else.
+
+## Add your own backend
+
+Directory kinds and storage engines are registered by name. Embed the `Unimplemented` type (every method returns "not implemented"), override what you support, and register it in an `init` function:
+
+```go
+package storage
+
+type S3 struct {
+	Unimplemented
+	Bucket string
+}
+
+func init() {
+	Register("s3", func(opts map[string]string) (Engine, error) {
+		return &S3{Unimplemented: Unimplemented{Engine: "s3"}, Bucket: opts["bucket"]}, nil
+	})
+}
+```
+
+Then select it in `imap.xml` with `<storage engine="s3" bucket="mail"/>`. Directory kinds work the same way with `directorykind.Register`.
 
 ## Running it
-
-In Docker, IMAP is behind a profile so the rest of the stack is not affected:
 
 ```bash
 docker compose -f deploy/docker-compose.yml --profile imap up -d
 ```
 
-See [Docker Compose](/docs/deployment/docker-compose).
+The image builds the server with cgo (Gluon keeps its own cache in SQLite) and runs as a non-root user.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `IMAP_CONFIG` | `/etc/imap/imap.xml` in Docker | Path to `imap.xml`. |
+| `IMAP_CONTROL_SOCKET` | `/run/imap/control.sock` | Socket that `imapctl` uses. |
+| `GLUON_HOST` | from `imap.xml` | Overrides the plain listen address. |
+| `GLUON_DIR` | from `imap.xml` | Overrides Gluon's data dir. |
+| `GLUON_LOG_LEVEL` | unset | Log level, for example `debug`. |
+
+## Not done yet
+
+- **Delivery into IMAP.** Mail received on port 25 is not written to Pebble yet. The Node server needs to hand accepted mail to the IMAP storage.
+- **Mail added from outside a session.** Messages written to Pebble by another process while the server runs are announced to Gluon only when the user is first loaded.
+- **Hashed passwords.** Passwords are compared as plain text. A directory kind that reads your SMTP user store should compare hashes.
