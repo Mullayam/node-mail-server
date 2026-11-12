@@ -1,0 +1,95 @@
+---
+title: DNS records
+description: Generate and publish the A, PTR, MX, SPF, DKIM and DMARC records for your domain.
+---
+
+Other mail servers decide whether to accept your mail from your DNS records. Set up the PTR record and your `INCOMING_MAIL_HOST` and `MAIL_SERVER_IP` values first, then generate the rest.
+
+## Generate the records
+
+The easiest way is the setup script. It writes `server/records.json` for you.
+
+```bash
+chmod +x scripts/run.sh
+./scripts/run.sh
+```
+
+To do it by hand, set `DOMAIN_NAME` and run the generator, `server/src/start.ts`. You can also change the domain in that file:
+
+```ts
+const records = new DNSRecordGenerator("example.com").generateAllRecords();
+```
+
+`records.json` contains one entry per record:
+
+| Key | Contents |
+|-----|----------|
+| `SPF` | The SPF TXT record. |
+| `DKIM` | `selector`, the public `dkimRecord` to publish, and the `privateKey`. |
+| `DMARC` | The DMARC TXT record. |
+| `MX` | The MX record that points at `INCOMING_MAIL_HOST`. |
+
+<Callout title="records.json contains your DKIM private key" type="error">
+  Never commit it or share it. It is in `.gitignore`. Publish only the records themselves in DNS, and keep the private key in `DKIM_PRIVATE_KEY`.
+</Callout>
+
+## Essential records
+
+![The A and PTR records to create](/images/dns-records.png)
+
+### A record
+
+- Create `mail.example.com` (and `mx.example.com`) pointing to your server's IP address.
+- Make sure the hostname matches your SSL certificate.
+
+### PTR record (reverse DNS)
+
+- Ask your hosting provider to set it. You cannot set it in your own DNS.
+- It must match your mail server's hostname.
+
+### MX record
+
+Share your mail server's hostname with anyone who wants to use your server, and tell them to create an MX record that points at it.
+
+- Point it at your mail server hostname.
+- Set a priority, for example `10 mx.example.com`.
+
+![The MX record](/images/mx-record.png)
+
+## Anti-spam records
+
+![SPF, DKIM and DMARC records](/images/anti-spam-records.png)
+
+### SPF
+
+Lists the servers that may send mail for your domain. The generator creates:
+
+```text
+v=spf1 a mx ip4:YOUR_IP ~all
+```
+
+`~all` marks mail from other servers as suspicious. Once you are sure the record is right, change it to `-all` to tell receivers to reject it.
+
+### DKIM
+
+Adds a signature to every message so receivers can prove it came from you and was not changed. Publish the public key as a TXT record at:
+
+```text
+default._domainkey.example.com
+```
+
+The value looks like `v=DKIM1; k=rsa; p=...`. The generator creates a 2048-bit RSA key. `default` is the selector, so it must match `DKIM_SELECTOR`. Put the private key from `records.json` in `DKIM_PRIVATE_KEY`.
+
+### DMARC
+
+Tells receivers what to do when SPF and DKIM checks fail, and where to send reports. Publish a TXT record at `_dmarc.example.com`. The generator creates:
+
+```text
+v=DMARC1; p=quarantine; pct=100; rua=mailto:dmarc-reports@example.com; ruf=mailto:dmarc-failures@example.com
+```
+
+Create the two report mailboxes (or change the addresses) so you receive the reports. Start with `p=none` or `p=quarantine` and move to `p=reject` when your reports are clean.
+
+## Verify
+
+After DNS has propagated, check everything with [MXToolbox](https://mxtoolbox.com/diagnostic.aspx). See [Testing](/docs/getting-started/testing).
