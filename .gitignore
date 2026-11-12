@@ -21,3 +21,8 @@ records.json
 
 # Node outbound queue (server/src/server/mta/OutboundQueue.ts)
 spool/
+
+# IMAP configs hold passwords: commit only the *.example.xml files
+server/imap/conf/imap.xml
+server/imap/conf/users.xml
+server/imap/tls/
