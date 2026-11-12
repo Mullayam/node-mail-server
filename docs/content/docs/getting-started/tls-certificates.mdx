@@ -1,0 +1,55 @@
+---
+title: TLS certificates
+description: Get a free Let's Encrypt certificate so mail between servers is encrypted with STARTTLS.
+---
+
+A valid certificate lets other servers and mail clients encrypt their connection with STARTTLS. Do not use a self-signed certificate: many receivers treat it as a sign of spam. This works with any transport, relay or direct delivery.
+
+## Prerequisites
+
+- A Linux server with root access.
+- A DNS A record for your mail hostname that points at the server.
+- Port 80 free for a short while, for the verification step.
+
+## Get a certificate with Certbot
+
+Install Certbot:
+
+```bash
+sudo apt update
+sudo apt install certbot
+```
+
+Request the certificate. Use your own mail hostname:
+
+```bash
+sudo certbot certonly --standalone --preferred-challenges http -d mail.example.com
+```
+
+Certbot writes the files here:
+
+| File | Path |
+|------|------|
+| Certificate | `/etc/letsencrypt/live/mail.example.com/fullchain.pem` |
+| Private key | `/etc/letsencrypt/live/mail.example.com/privkey.pem` |
+
+## Tell the server where they are
+
+Set these in `server/.env`:
+
+```env
+TLS_PRIVATE_KEY_PATH="/etc/letsencrypt/live/mail.example.com/privkey.pem"
+TLS_CERTFICATE_PATH="/etc/letsencrypt/live/mail.example.com/fullchain.pem"
+```
+
+<Callout title="The variable name is spelled TLS_CERTFICATE_PATH">
+  That spelling is the real name the code reads. Do not correct it to CERTIFICATE.
+</Callout>
+
+<Callout title="TLS is switched off in the current code" type="warn">
+  The TLS options in `server/src/server/OutgoingServer.ts` are commented out, including the block at the top that reads the two files. Uncomment that block and the `key` and `cert` lines in `getOptions()` to serve STARTTLS on port 587.
+</Callout>
+
+## Renewal
+
+Let's Encrypt certificates last 90 days. Test renewal with `sudo certbot renew --dry-run`, then restart the server after a real renewal so it reads the new files.
