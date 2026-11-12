@@ -1,0 +1,9 @@
+{
+  "title": "Reference",
+  "defaultOpen": true,
+  "pages": [
+    "environment-variables",
+    "node-mta-api",
+    "project-structure"
+  ]
+}

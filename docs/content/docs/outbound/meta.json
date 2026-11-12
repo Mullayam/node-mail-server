@@ -1,0 +1,9 @@
+{
+  "title": "KumoMTA",
+  "defaultOpen": true,
+  "pages": [
+    "overview",
+    "configuration",
+    "known-issues"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "title": "Guides",
+  "defaultOpen": true,
+  "pages": [
+    "receiving-mail",
+    "sending-mail",
+    "pgp-encryption",
+    "plugins",
+    "calendar-invites"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "title": "NodeMailServer",
+  "pages": [
+    "index",
+    "getting-started",
+    "guides",
+    "reference",
+    "outbound",
+    "deployment",
+    "imap"
+  ]
+}

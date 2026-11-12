@@ -1,0 +1,11 @@
+{
+  "title": "Getting started",
+  "defaultOpen": true,
+  "pages": [
+    "prerequisites",
+    "installation",
+    "dns-records",
+    "tls-certificates",
+    "testing"
+  ]
+}
