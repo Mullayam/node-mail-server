@@ -1,18 +1,21 @@
-import { MiscellaneousHelper } from "../lib/helpers";
-import { Logging } from "../lib/logs";
-import { MailConfig } from "../server/config/MailConfig";
-import {
+import { randomUUID } from "crypto";
+import type {
 	SMTPServerAddress,
 	SMTPServerAuthentication,
 	SMTPServerAuthenticationResponse,
 	SMTPServerDataStream,
 	SMTPServerSession,
 } from "smtp-server";
-import { AddressObject } from "mailparser";
-import { NodeMailerMTA } from "@/server/mta/node-mta";
-
-// Shared MTA instance so the MX cache persists across requests
-const mta = new NodeMailerMTA();
+import { HEADER } from "../config/constants";
+import { env } from "../config/env";
+import { mailConfig } from "../config/mailConfig";
+import { smtpReply } from "../config/smtpMessages";
+import { MiscellaneousHelper } from "../lib/helpers";
+import { collectMessage, RawMessage } from "../lib/helpers/RawMessage";
+import { toSmtpError } from "../lib/helpers/smtpErrors";
+import { Logging } from "../lib/logs";
+import { mailWorkers } from "../lib/workers";
+import { getMailRuntime } from "../server/mta/runtime";
 
 class OutgoingMailHandler {
 	async HandleAuthenticate(
@@ -25,11 +28,7 @@ class OutgoingMailHandler {
 	): Promise<void> {
 		try {
 			if (auth.method === "XOAUTH2") {
-				return callback(
-					new Error(
-						"XOAUTH2 method is not allowed,Expecting LOGIN authentication",
-					),
-				);
+				return callback(smtpReply("AUTH_METHOD_NOT_ALLOWED").toError());
 			}
 
 			// Note: You should check the username and password here before accepting the connection
@@ -41,10 +40,10 @@ class OutgoingMailHandler {
 				Logging.dev("Client Authenticated " + auth.username);
 				callback(null, { user: auth.username });
 			} else {
-				callback(new Error("Invalid username or password"));
+				callback(smtpReply("AUTH_FAILED").toError());
 			}
 		} catch (error) {
-			return callback(new Error("Invalid username or password"));
+			return callback(smtpReply("AUTH_FAILED").toError());
 		}
 	}
 	HandleConnection(
@@ -59,7 +58,7 @@ class OutgoingMailHandler {
 
 		Logging.dev("Client Connected " + session.id);
 
-		return callback(null); // Accept the connection
+		callback(null); // Accept the connection
 	}
 	HandleConnectionClose(
 		session: SMTPServerSession,
@@ -87,11 +86,8 @@ class OutgoingMailHandler {
 			//  Check For Relay, Dont Allow Relay
 
 			return callback(); // Accept the address
-		} catch (error: any) {
-			if (error instanceof Error) {
-				return callback(new Error(error.message));
-			}
-			return callback(null);
+		} catch (error) {
+			return callback(toSmtpError(error, "MAIL FROM failed"));
 		}
 	}
 	async HandleRcptTo(
@@ -102,6 +98,13 @@ class OutgoingMailHandler {
 		try {
 			Logging.dev("Sending Mail To " + address.address);
 
+			const { maxRecipients } = mailConfig.get().outgoing;
+			if (session.envelope.rcptTo.length >= maxRecipients) {
+				return callback(
+					smtpReply("TOO_MANY_RECIPIENTS", { max: maxRecipients }).toError(),
+				);
+			}
+
 			if (session.envelope && session.envelope.mailFrom) {
 				const recipientMail =
 					MiscellaneousHelper.extractEmail(address.address) || address.address;
@@ -110,17 +113,16 @@ class OutgoingMailHandler {
 					MiscellaneousHelper.extractEmail(session.envelope.mailFrom.address) ||
 					session.envelope.mailFrom.address;
 
-				Logging.dev(`Outgoing mail localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${mailFrom} to ${recipientMail}`);
+				Logging.dev(
+					`Outgoing mail localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${mailFrom} to ${recipientMail}`,
+				);
 				// use MAX_EMAILS_PER_MINUTE , prevent Spam Protection ,using of bulk mails can down your server and IP Reputation
 				return callback();
 			}
 
 			return callback();
 		} catch (error) {
-			if (error instanceof Error) {
-				return callback(new Error(error.message));
-			}
-			return callback(null);
+			return callback(toSmtpError(error, "RCPT TO failed"));
 		}
 	}
 	async HandleNewMail(
@@ -128,71 +130,76 @@ class OutgoingMailHandler {
 		session: SMTPServerSession,
 		callback: (err?: Error | null | undefined, message?: string) => void,
 	): Promise<void> {
-		let mailchunks = "";
-		stream.on("data", (chunk) => (mailchunks += chunk.toString()));
-		stream.on("end", async () => {
-			try {
-				const parsedEmailData = await MailConfig.ParseEmail(mailchunks);
-
-				const MAIL_FROM = (session.envelope.mailFrom &&
-					session.envelope.mailFrom.address) as string;
-				const RCPT_TO = session.envelope.rcptTo.map((v) => v.address);
-
-				// Collect all recipients (to + cc + bcc), deduplicate
-				const extractAddresses = (field: AddressObject | AddressObject[] | undefined): string[] => {
-					if (!field) return [];
-					const objects = Array.isArray(field) ? field : [field];
-					return objects.flatMap((obj) => obj.value.map((v) => v.address).filter(Boolean) as string[]);
-				};
-				const toAddresses = extractAddresses(parsedEmailData.to);
-				const ccAddresses = extractAddresses(parsedEmailData.cc);
-				const bccAddresses = extractAddresses(parsedEmailData.bcc);
-
-				let totalRecipients = [...toAddresses, ...ccAddresses, ...bccAddresses];
-				// Fall back to envelope RCPT TO if parsed headers yield nothing
-				if (totalRecipients.length === 0) {
-					totalRecipients = RCPT_TO;
-				}
-				totalRecipients = [...new Set(totalRecipients)];
-
-				const deliveryResults = await mta.sendMail({
-					from: MAIL_FROM,
-					to: totalRecipients,
-					subject: parsedEmailData.subject || "(no subject)",
-					text: parsedEmailData.text || undefined,
-					html: parsedEmailData.html || undefined,
-					attachments: parsedEmailData.attachments?.map((att) => ({
-						filename: att.filename || undefined,
-						content: att.content,
-						contentType: att.contentType,
-					})),
-					dkim: process.env.DKIM_PRIVATE_KEY
-						? {
-							domainName: MAIL_FROM.split("@")[1],
-							keySelector: process.env.DKIM_SELECTOR || "default",
-							privateKey: process.env.DKIM_PRIVATE_KEY,
-						}
-						: undefined,
-					dsn: {
-						notify: ["FAILURE", "DELAY"],
-						returnHeaders: true,
-					},
-				});
-
-				const failed = deliveryResults.filter((r) => !r.success);
-				if (failed.length > 0) {
-					Logging.dev(`Partial delivery failure: ${failed.map((f) => `${f.recipient}: ${f.error || f.dsn?.diagnosticCode}`).join(", ")}`);
-				}
-
-				const successMessage = `Outgoing mail delivered localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${MAIL_FROM} to ${totalRecipients.join(",")}`;
-				Logging.dev(successMessage);
-
-				return callback(null, "250 Message accepted for delivery");
-			} catch (error: any) {
-				return callback(new Error(error.message));
+		try {
+			const config = mailConfig.get().outgoing;
+			const message = await collectMessage(stream, config.maxMessageSizeBytes);
+			if (!message) {
+				return callback(
+					smtpReply("MESSAGE_TOO_LARGE", {
+						maxSize: config.maxMessageSizeBytes,
+					}).toError(),
+				);
 			}
-		});
-	}
 
+			const sender = session.envelope.mailFrom
+				? session.envelope.mailFrom.address
+				: "";
+			const recipients = [
+				...new Set(session.envelope.rcptTo.map((v) => v.address)),
+			];
+			if (!recipients.length) {
+				return callback(smtpReply("NO_VALID_RECIPIENTS").toError());
+			}
+
+			const { queue, bounces } = getMailRuntime();
+			const queueId = randomUUID();
+			const raw = RawMessage.prependHeaders(
+				RawMessage.stripHeaders(
+					message,
+					(name) =>
+						name.toLowerCase() === "bcc" ||
+						name.toLowerCase() === HEADER.QUEUE_ID.toLowerCase(),
+				),
+				`${HEADER.QUEUE_ID}: ${queueId}\r\n`,
+			);
+
+			const dkimDomain = sender.split("@")[1];
+			const dkimKey = env.dkim.privateKey;
+			const signed =
+				config.dkimSign && dkimKey && dkimDomain
+					? await mailWorkers.dkimSign({
+							raw,
+							dkim: {
+								domainName: dkimDomain,
+								keySelector: env.dkim.selector,
+								privateKey: dkimKey,
+							},
+							envelope: { from: sender, to: recipients },
+						})
+					: raw;
+
+			const returnPath = await bounces.prepareReturnPath(
+				queueId,
+				sender,
+				recipients,
+			);
+			await queue.enqueue({
+				id: queueId,
+				from: returnPath,
+				sender,
+				recipients,
+				raw: signed,
+				dsn: { notify: ["FAILURE", "DELAY"], returnHeaders: true },
+			});
+
+			Logging.dev(
+				`Outgoing mail queued id = ${queueId} driver = ${queue.driverName} localPort = ${session.localPort}, remoteIp = ${session.remoteAddress}, remotePort = ${session.remotePort}, from = ${sender} to ${recipients.join(",")}`,
+			);
+
+			return callback(null, smtpReply("MESSAGE_QUEUED", { id: queueId }).text);
+		} catch (error) {
+			return callback(toSmtpError(error, "Outgoing message failed"));
+		}
+	}
 }
 export const NewOutgoingMailHandler = new OutgoingMailHandler();
