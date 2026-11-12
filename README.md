@@ -1,6 +1,6 @@
 # This Project is Under Develepment
 
-## [IMAP](./imap/readme.md)
+## [IMAP](./server/imap/readme.md)
 
 [Setup Video](https://media.cm/u/H5U7)
 
@@ -48,13 +48,13 @@ This project started as a fun experiment but has grown into something more. Righ
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **IncomingMailHandler** | `src/services/IncomingMailHandler.ts` | Handles MAIL FROM, RCPT TO, and DATA for inbound mail. Runs DKIM/SPF/DMARC checks in parallel, applies ARC sealing, and encrypts with PGP before storage. |
-| **OutgoingMailHandler** | `src/services/OutgoingMailHandler.ts` | Handles authentication, parses outbound mail, extracts recipients from headers (To/Cc/Bcc), and delivers via the MTA with DKIM and DSN. |
-| **NodeMailerMTA** | `src/server/mta/node-mta.ts` | Core mail transfer agent. Composes RFC5322 messages via `streamTransport`, signs with DKIM, resolves MX records, and delivers to all domains in parallel over single TCP connections per domain. |
-| **MailAuth** | `src/server/config/mailauth.ts` | DKIM verification, SPF checks, DMARC policy evaluation, MTA-STS validation, and ARC message sealing. |
-| **PGPService** | `src/server/config/encryption/PGPService.ts` | OpenPGP key generation, message encryption, and decryption for at-rest email storage. |
-| **DNSChecker** | `src/server/config/DnsChecker.ts` | DNS record resolution (MX, SPF, DKIM, DMARC, TXT), IP resolution, and TCP port connectivity checks. |
-| **RFC5322MailComposer** | `src/server/config/mail.composer.ts` | RFC5322-compliant header generation and MIME message composition. |
+| **IncomingMailHandler** | `server/src/services/IncomingMailHandler.ts` | Handles MAIL FROM, RCPT TO, and DATA for inbound mail. Runs DKIM/SPF/DMARC checks in parallel, applies ARC sealing, and encrypts with PGP before storage. |
+| **OutgoingMailHandler** | `server/src/services/OutgoingMailHandler.ts` | Handles authentication, parses outbound mail, extracts recipients from headers (To/Cc/Bcc), and delivers via the MTA with DKIM and DSN. |
+| **NodeMailerMTA** | `server/src/server/mta/node-mta.ts` | Core mail transfer agent. Composes RFC5322 messages via `streamTransport`, signs with DKIM, resolves MX records, and delivers to all domains in parallel over single TCP connections per domain. |
+| **MailAuth** | `server/src/server/config/MailAuth.ts` | DKIM verification, SPF checks, DMARC policy evaluation, MTA-STS validation, and ARC message sealing. |
+| **PGPService** | `server/src/server/config/encryption/PGPService.ts` | OpenPGP key generation, message encryption, and decryption for at-rest email storage. |
+| **DNSChecker** | `server/src/server/config/DnsChecker.ts` | DNS record resolution (MX, SPF, DKIM, DMARC, TXT), IP resolution, and TCP port connectivity checks. |
+| **RFC5322MailComposer** | `server/src/server/config/MailComposer.ts` | RFC5322-compliant header generation and MIME message composition. |
 
 ---
 
@@ -196,7 +196,7 @@ PGP_PASSPHRASE="your_secure_passphrase"
 
 Use Any Package Manager, I'm just using bun, to install check out `bun.sh`
 
-1.  Install Dependencies First (Recommended) `bun install`
+1.  Install Dependencies First (Recommended) `cd server && bun install`
 
 2.  Build the Applications `bun run build`, dont use `bun build`
 
@@ -213,10 +213,10 @@ We can do it one, but we have to manage incoming and outgoing in same file, whic
  Please Setup PTR(Reverse Lookup) and `MAIL_HOST`, `MAIL_SERVER_IP` first
 ### How to genrate DNS Records
 1.
-- ```bash chmod +x run.sh```
-- ```bash ./run.sh```
+- ```bash chmod +x scripts/run.sh```
+- ```bash ./scripts/run.sh```
 2 .
-- Go to src -> start.ts
+- Go to server/src -> start.ts
 
 - Open and replace `your_domain` with your domain name
 
@@ -224,11 +224,11 @@ We can do it one, but we have to manage incoming and outgoing in same file, whic
 const records = new DNSRecordGenerator("cirrusmail.cloud").generateAllRecords();
 ```
 
-and Run this File, Records will create in `records.json` File in root directory.
+and Run this File, Records will create in `records.json` File in `server/` directory.
 
 ### Essential DNS Records
 
-![DNS Record Setup](image-1.png)
+![DNS Record Setup](assets/images/image-1.png)
 
 1. A Record
 
@@ -244,11 +244,11 @@ Share your Mailserver hostname, who ever wants to use your server and tell them 
 
 - Point to your mail server hostname
 - Set priority (e.g., 10 mail.yourdomain.com)
-  ![MX Record Setup](image.png)
+  ![MX Record Setup](assets/images/image.png)
 
 # Anti-Spam DNS Records
 
-![Anti-Spam DNS Records Setup](image-2.png)
+![Anti-Spam DNS Records Setup](assets/images/image-2.png)
 
 1. SPF Record (TXT)
 
@@ -350,7 +350,7 @@ PGP_PASSPHRASE="your_secure_passphrase"
 - Test sending/receiving
 ### Use external tools:
 Go and Test Your Mail Server  here , it should be like in given Image https://mxtoolbox.com/diagnostic.aspx
-![See image](image-3.png)
+![See image](assets/images/image-3.png)
 
  
 # iCalendar event for Nodemailer - Resources
@@ -384,7 +384,7 @@ npm install googleapis nodemailer ics
 ## Project Structure
 
 ```
-src/
+server/src/
 ├── main.ts                          # Entry point
 ├── start.ts                         # DNS record generation
 ├── interfaces/                      # TypeScript interfaces
@@ -402,8 +402,8 @@ src/
 │   ├── config/
 │   │   ├── DnsChecker.ts            # DNS resolution & connectivity
 │   │   ├── DnsRecordGenrator.ts     # DNS record generation
-│   │   ├── mail.composer.ts         # RFC5322 header/MIME composition
-│   │   ├── mailauth.ts             # DKIM/SPF/DMARC/ARC auth
+│   │   ├── MailComposer.ts          # RFC5322 header/MIME composition
+│   │   ├── MailAuth.ts              # DKIM/SPF/DMARC/ARC auth
 │   │   ├── MailConfig.ts           # Email parsing & transport
 │   │   ├── SpamFilteration.ts      # Spam filtering
 │   │   └── encryption/
