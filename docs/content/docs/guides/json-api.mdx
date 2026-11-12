@@ -1,0 +1,100 @@
+---
+title: JSON send API
+description: Send mail with one HTTP request. The server builds the MIME message and sends it through the same pipeline as port 587.
+---
+
+The JSON send API lets your own apps send mail without an SMTP library. You post JSON, the server builds the MIME message in a [worker thread](/docs/reference/background-workers), and the message then goes through the same steps as mail submitted on port 587.
+
+## Turn it on
+
+The API is off until you set a token.
+
+| Setting | Where | Default |
+|---------|-------|---------|
+| `MAIL_API_TOKEN` | `server/.env` | none. The API does not start without it. |
+| `MAIL_API_HOST` | `server/.env` | `0.0.0.0` |
+| `MAIL_API_PORT` | `server/.env` | `8080` |
+| `api.enabled` | `server/config/mail.config.json` | `true` |
+
+<Callout title="Keep it private" type="warn">
+  The token is the only protection. Put the API behind a TLS reverse proxy, or listen on a private network, and do not open port 8080 to the internet.
+</Callout>
+
+## Send a message
+
+```bash
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Authorization: Bearer $MAIL_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from": { "name": "Me", "address": "me@yourdomain.com" },
+    "to": "user@example.com",
+    "cc": ["Team <team@example.com>"],
+    "bcc": "audit@yourdomain.com",
+    "replyTo": "support@yourdomain.com",
+    "subject": "Hello",
+    "text": "Plain text body",
+    "html": "<p>HTML body</p>",
+    "headers": { "X-Order-Id": "1234" },
+    "attachments": [
+      { "filename": "invoice.pdf", "content": "<base64>", "contentType": "application/pdf" }
+    ]
+  }'
+```
+
+A successful call answers `202 Accepted`:
+
+```json
+{ "id": "3f2c9a52-1b0e-4c64-9f6c-0d3f0f0c9a11", "from": "me@yourdomain.com", "recipients": ["user@example.com", "team@example.com", "audit@yourdomain.com"] }
+```
+
+`202` means the message is in the [outbound queue](/docs/guides/sending-mail#the-outbound-queue), not that it was delivered. Delivery results and bounces are handled by the [bounce server](/docs/guides/bounces).
+
+## Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `from` | yes | Exactly one address. |
+| `to`, `cc`, `bcc` | at least one of them | One address or a list. |
+| `replyTo` | no | One address or a list. |
+| `subject` | no | A single line. |
+| `text`, `html` | at least one of them | The message body. |
+| `headers` | no | An object of extra headers. Values are single-line text. |
+| `inReplyTo`, `references` | no | Threading headers. |
+| `attachments` | no | A list of `{ filename, content, contentType, cid }`. `content` is base64. Set `cid` to use the file inline from the HTML. |
+
+An address can be `"a@b.com"`, `"Name <a@b.com>"`, `{ "name": "Name", "address": "a@b.com" }`, or a list of these.
+
+### Rules
+
+- `bcc` addresses receive the message but never appear in its headers.
+- Duplicate addresses are sent once.
+- The number of recipients is limited by `outgoing.maxRecipients`, and the message size by `outgoing.maxMessageSizeBytes`.
+- `headers` cannot set `From`, `To`, `Cc`, `Bcc`, `Subject`, `Content-Type`, `Content-Transfer-Encoding`, `MIME-Version`, `DKIM-Signature` or `X-AE-Queue-Id`.
+- [Outgoing headers](/docs/guides/sending-mail#outgoing-headers) from `mail.config.json` are added after yours and replace a header with the same name.
+
+## Errors
+
+Every error is JSON: `{ "error": "<message>" }`.
+
+| Status | Meaning |
+|--------|---------|
+| `400` | The body is not valid. The message says which field. |
+| `401` | The token is missing or wrong. |
+| `413` | The message is larger than `outgoing.maxMessageSizeBytes`. |
+| `429` | The client is over the outgoing [rate limit](/docs/reference/configuration-files#limits). |
+| `503` | The worker queue is full. Try again later. |
+| `500` | The message could not be queued. The cause is in the server log. |
+
+## Why the server builds the MIME message
+
+KumoMTA's own JSON form has no `cc` field, and SMTP needs a finished message. Building the MIME message here, then sending it unchanged, means every [outbound driver](/docs/guides/outbound-drivers) receives the same raw message and the same recipient list, including Bcc.
+
+## Components involved
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `ApiServerConfig` | `server/src/server/ApiServer.ts` | Express server, Bearer token check, body size limit. |
+| `JsonMailHandler` | `server/src/services/JsonMailHandler.ts` | Validates the JSON and builds the task. |
+| `composeMime` | `server/src/lib/workers/mailTasks.ts` | Builds the MIME message with nodemailer in a worker. |
+| `submitOutgoing` | `server/src/services/OutgoingPipeline.ts` | Adds headers, signs with DKIM and queues. Shared with port 587. |

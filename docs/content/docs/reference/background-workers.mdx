@@ -1,0 +1,45 @@
+---
+title: Background workers
+description: Which work runs in worker threads, how to size the pool and what clients see when it is busy.
+---
+
+Node runs JavaScript on one main thread. If that thread is busy with a large message, every other SMTP session waits. The server moves the heavy work to worker threads (`worker_threads`), so the main thread only handles network traffic and waiting.
+
+## What runs in a worker
+
+| Task | Used by |
+|------|---------|
+| `authenticate` | DKIM, SPF and DMARC checks on incoming mail. |
+| `dkimSign` | Signing outgoing mail. |
+| `pgpEncrypt` | Encrypting incoming mail for storage. |
+| `parseDsn` | Reading bounce reports. |
+| `composeMime` | Building the message for the [JSON send API](/docs/guides/json-api). |
+
+DNS lookups, sockets and file writes are already asynchronous, so they stay on the main thread.
+
+## Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAIL_WORKERS` | CPU cores minus 1, at most 4 | Number of worker threads. `0` runs everything on the main thread. |
+| `MAIL_WORKER_CONCURRENCY` | `4` | Tasks one worker runs at the same time. |
+| `MAIL_WORKER_MAX_QUEUE` | `1000` | Tasks allowed to wait for a free worker. |
+| `MAIL_WORKER_TIMEOUT_MS` | `120000` | Longest a single task may run. |
+
+## When the pool is busy
+
+When `MAIL_WORKER_MAX_QUEUE` tasks are already waiting, new mail is not accepted for processing:
+
+- On port 25 and 587, the client gets `451 4.3.2` (the `SERVER_BUSY` reply in [`smtp-messages.json`](/docs/reference/configuration-files#smtp-messagesjson)) and tries again later.
+- The JSON API answers `503`.
+
+If a worker stops, or a task runs longer than `MAIL_WORKER_TIMEOUT_MS`, that worker is replaced and its tasks fail. If the pool cannot start at all, the work runs on the main thread and the server logs it, so mail still flows.
+
+## Components involved
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `WorkerPool` | `server/src/lib/workers/WorkerPool.ts` | Starts, feeds and replaces the threads. |
+| `mail.worker.ts` | `server/src/lib/workers/mail.worker.ts` | The code that runs inside a thread. |
+| `mailTasks` | `server/src/lib/workers/mailTasks.ts` | The tasks themselves. |
+| `mailWorkers` | `server/src/lib/workers/index.ts` | The functions the rest of the server calls. |

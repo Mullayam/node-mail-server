@@ -1,0 +1,125 @@
+---
+title: Bounces
+description: How bounce reports come back, how the DSN processor reads them and what happens to a hard-bouncing address.
+---
+
+When a message cannot be delivered, the remote server sends a delivery status notification (DSN), also called a bounce. With the bounce server on, those reports come back to the Node server instead of the sender's mailbox, so the server can match them to a message, stop sending to dead addresses and tell the sender.
+
+## Turn it on
+
+Set `BOUNCE_DOMAIN` in `server/.env`, for example `bounces.example.com`, and create an MX record for it that points at your server (see [DNS records](/docs/getting-started/dns-records#bounce-domain)).
+
+From then on, each queued message gets its own envelope sender:
+
+```text
+bounce+<queue id>@bounces.example.com
+```
+
+This is called VERP. The address only exists for that message, so a report that comes back to it can be trusted to belong to it. The `From` header the recipient sees is not changed.
+
+Without `BOUNCE_DOMAIN`, messages keep the sender's own address as the envelope sender. The queue still records permanent failures, but remote bounces go to the sender's mailbox.
+
+## Where bounces are accepted
+
+| Entry point | Used for |
+|-------------|----------|
+| Port 25, recipient at `BOUNCE_DOMAIN` | Bounces from other mail servers. This is the normal path. |
+| Port 25, a bounce report sent to a normal mailbox | The report is delivered to the mailbox as usual. The DSN processor also reads and records it. |
+| Bounce SMTP server, `BOUNCE_SMTP_PORT` (default `2525`) | A separate listener for bounces only. Use it behind a forwarder. Turn it off with `BOUNCE_SMTP_PORT=0` or `bounces.smtpServer.enabled` set to `false`. |
+| Bounce HTTP server, `BOUNCE_HTTP_PORT` (default `8025`) | `POST /kumo/events` for KumoMTA log events. Needs `BOUNCE_WEBHOOK_TOKEN`. Turn it off with `bounces.httpServer.enabled`. |
+
+## The DSN processor
+
+The DSN processor (`server/src/services/bounce/DsnProcessor.ts`) does three things for each report:
+
+1. Checks that it is a delivery report: a top-level `multipart/report` with a `delivery-status` or `feedback-report` part. The parsing runs in a [worker thread](/docs/reference/background-workers).
+2. Reads the status, action, diagnostic text and remote server for each failed recipient.
+3. Matches the report to the message we sent, using the VERP address or the `X-AE-Queue-Id` header in the returned message.
+
+### Which reports are trusted
+
+| Report | Logged and posted to the webhook | Can suppress an address | Sender notified |
+|--------|----------------------------------|-------------------------|-----------------|
+| Sent to a VERP address, for a message we sent, naming one of its recipients | yes, `verified: true` | yes | yes, for hard failures |
+| Sent to a normal mailbox | yes, `verified: false` | no | no |
+| Names an address we never sent that message to | yes, `verified: false` | no | no |
+
+This means a forged report cannot block an address or trick the server into sending notices.
+
+## What happens to a bounce
+
+1. The event is recorded in the log.
+2. **Suppression.** An address that hard-bounces with an address failure (`5.1.x`, `5.2.1`) or sends a spam complaint goes on the suppression list for `bounces.suppression.days` (default 30). Later mail to it fails straight away, so you stop sending to dead addresses.
+3. **Sender notice.** The original sender gets a standard bounce report, unless `bounces.notifySender` is `false`. The same notice is sent when the queue gives up on a recipient after `queue.maxAgeHours`.
+4. **Webhook.** The event is posted to `BOUNCE_EVENTS_WEBHOOK_URL`, if set.
+
+Soft bounces (`4xx`) are recorded and posted to the webhook, but do not suppress.
+
+## Webhook events
+
+`BOUNCE_EVENTS_WEBHOOK_URL` receives one `POST` with a JSON body for each event. If `BOUNCE_EVENTS_WEBHOOK_TOKEN` is set, it is sent as `Authorization: Bearer <token>`. At most 50 requests are in flight; further events are dropped and logged.
+
+```json
+{
+  "source": "smtp",
+  "type": "hard",
+  "recipient": "gone@example.org",
+  "status": "5.1.1",
+  "action": "failed",
+  "verified": true,
+  "originalSender": "me@yourdomain.com",
+  "queueId": "3f2c9a52-1b0e-4c64-9f6c-0d3f0f0c9a11",
+  "diagnostic": "550 5.1.1 user unknown",
+  "remoteMta": "mx.example.org",
+  "receivedAt": "2026-11-13T10:15:00.000Z"
+}
+```
+
+| Field | Values |
+|-------|--------|
+| `source` | `smtp` (a report), `kumo` (a KumoMTA event), `queue` (the queue gave up) |
+| `type` | `hard`, `soft` or `complaint` |
+| `verified` | For a report: `true` when it came through the VERP address and names a recipient of that message. For a KumoMTA event: always `true`. For the queue: `true` when a remote server gave the answer. |
+
+## KumoMTA events
+
+When KumoMTA delivers your mail, point its log hook at the bounce HTTP server. Both stay on the private network, so port 8025 does not need to be reachable from the internet.
+
+```text
+POST http://<node host>:8025/kumo/events
+Authorization: Bearer <BOUNCE_WEBHOOK_TOKEN>
+```
+
+The body is one KumoMTA log record or a list of them. These record types are used:
+
+| KumoMTA type | Becomes |
+|--------------|---------|
+| `Bounce`, `Expiration`, `OOB` | `hard` |
+| `TransientFailure` | `soft` |
+| `Feedback` | `complaint` |
+
+A hard event suppresses the address only when it is an address failure: an enhanced status of `5.1.x` or `5.2.1`, or a KumoMTA classification such as `InvalidRecipient` or `BadDestinationMailbox`. An `Expiration` notifies the sender but does not suppress. The sender is notified of each hard event when the original sender is known.
+
+## Manage the suppression list
+
+The list is stored in `MAIL_SPOOL_DIR/suppression.json`. Use the bounce HTTP server, with the same Bearer token:
+
+| Request | Result |
+|---------|--------|
+| `GET /suppressions/<email>` | `200` with the entry, or `404` |
+| `DELETE /suppressions/<email>` | `204` when removed, `404` when not listed |
+| `GET /healthz` | `200`. Does not need the token. |
+
+## Components involved
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `BounceServerConfig` | `server/src/server/BounceServer.ts` | The bounce SMTP server. Same layout as the incoming and outgoing servers. |
+| `NewBounceMailHandler` | `server/src/services/BounceMailHandler.ts` | RCPT TO and DATA for the bounce SMTP server. |
+| `BounceWebhookServerConfig` | `server/src/server/BounceWebhookServer.ts` | The HTTP server. |
+| `NewBounceWebhookHandler` | `server/src/services/BounceWebhookHandler.ts` | KumoMTA events and suppression routes. |
+| `DsnProcessor` | `server/src/services/bounce/DsnProcessor.ts` | Reads and verifies reports. |
+| `BounceProcessor` | `server/src/services/bounce/BounceProcessor.ts` | Records, suppresses, notifies and posts webhooks. |
+| `BounceRegistry` | `server/src/services/bounce/BounceRegistry.ts` | Remembers each sent message for `bounces.trackingDays`. |
+| `SuppressionList` | `server/src/services/bounce/SuppressionList.ts` | The list of addresses we no longer send to. |
+| `DsnBuilder` | `server/src/services/bounce/DsnBuilder.ts` | Builds the bounce report sent to the original sender. |

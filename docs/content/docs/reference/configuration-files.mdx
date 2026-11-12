@@ -1,0 +1,145 @@
+---
+title: Configuration files
+description: What lives in .env, mail.config.json and smtp-messages.json, and every switch in mail.config.json.
+---
+
+Settings are split three ways:
+
+| Where | What |
+|-------|------|
+| `server/.env` | Hosts, ports, keys, passwords and the driver choice. See [Environment variables](/docs/reference/environment-variables). |
+| `server/config/mail.config.json` | What is turned on or off, policy actions, limits, queue and bounce behaviour. |
+| `server/config/smtp-messages.json` | The code, enhanced status and text of every SMTP reply the server sends. |
+
+Only `server/src/config/env.ts` reads environment variables. Fixed values, such as driver names, DSN statuses, default settings and the built-in reply catalog, are in `server/src/config/constants.ts`.
+
+Move the files with `MAIL_CONFIG_PATH` and `SMTP_MESSAGES_PATH`. If a file is missing, the server logs a notice and uses the built-in defaults. A key you leave out of a file also uses its default, so a file only needs the settings you change.
+
+## Reloading
+
+Both JSON files reload when you save them. You do not restart the server.
+
+- If a file has a mistake, the server logs each problem and keeps the previous settings.
+- Unknown keys, values of the wrong type, bad actions, bad CIDR ranges and bad header names are all reported.
+- Listener settings apply on restart: turning the bounce servers on or off, and the size advertised in `EHLO`. Everything else applies straight away.
+
+## `mail.config.json`
+
+### Policy actions
+
+Each check in `incoming.checks` takes one action:
+
+| Action | Result |
+|--------|--------|
+| `accept` | Ignore the result. |
+| `tag` | Accept the message, and add `X-AE-Spam-Flag: YES` and `X-AE-Policy-Flags` to it. |
+| `tempfail` | Reply `4xx`, so the sender retries later. |
+| `reject` | Reply `5xx`. |
+
+A DNS error never causes a hard reject. `reject` becomes `tempfail` for that message.
+
+### Incoming checks
+
+| Check | Setting | Default | Reject reply |
+|-------|---------|---------|--------------|
+| Reverse DNS, with forward confirmation | `reverseDns.enabled`, `requireForwardConfirmed`, `onFail` | off, `true`, `tag` | `550 5.7.25` |
+| Disposable sender address | `disposableSender.enabled` | on | `550 5.1.7` |
+| Sender domain has no MX, A or AAAA record | `senderDomain.enabled`, `onUnroutable` | on, `reject` | `550 5.1.8` |
+| SPF `fail`, `softfail`, `none`, `temperror` | `spf.onFail`, `onSoftFail`, `onNone`, `onTempError` | `tag`, `accept`, `accept`, `accept` | `550 5.7.23` |
+| DKIM fails, or no signature | `dkim.onFail`, `onNone` | `tag`, `accept` | `550 5.7.20` |
+| DMARC fails with `p=reject` or `p=quarantine` | `dmarc.onReject`, `onQuarantine`, `honorPercentage` | `reject`, `tag`, `true` | `550 5.7.26` |
+
+The reverse DNS check runs when the client connects. The sender checks run at `MAIL FROM`, and the SPF, DKIM and DMARC checks run after `DATA`. A bounce (`MAIL FROM:<>`) skips the sender domain check.
+
+### Limits
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `incoming.maxMessageSizeBytes` | `10485760` | Largest message accepted on port 25. |
+| `incoming.maxRecipients` | `100` | Recipients for each message on port 25. |
+| `incoming.rateLimit` | on, `100` | `enabled` and `maxMessagesPerMinute`. A client over the limit gets a temporary `421`. |
+| `incoming.trustedNetworks` | loopback | CIDR ranges that skip the checks and the rate limit, for example an internal relay. |
+| `incoming.recipients.acceptedDomains` | empty | Domains you accept mail for. Empty accepts any domain. |
+| `incoming.recipients.knownRecipients` | empty | Addresses you accept. Empty accepts any user. |
+| `outgoing.maxMessageSizeBytes` | `10485760` | Largest message accepted on port 587 and by the JSON API. |
+| `outgoing.maxRecipients` | `100` | Recipients for each message. |
+| `outgoing.rateLimit` | on, `null` | `enabled` and `maxConnectionsPerMinute`. `null` uses `MAX_EMAILS_PER_MINUTE`. |
+
+### Pipeline switches
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `incoming.arcSeal` | `true` | Seal incoming mail with ARC. Also needs `ARC_PRIVATE_KEY_PATH` and `ARC_SIGNING_DOMAIN`. |
+| `incoming.pgpEncryption` | `true` | Encrypt incoming mail for storage. Also needs the `PGP_*` keys. |
+| `incoming.customHeaders` | on | `enabled` and `headers`. Extra headers added to incoming mail after the checks. |
+| `outgoing.dkimSign` | `true` | Sign outgoing mail with DKIM. Also needs `DKIM_PRIVATE_KEY`. |
+| `outgoing.bounceHeader` | on, `X-AE-Bounce-Address` | `enabled` and `name`. Adds the bounce address when `BOUNCE_DOMAIN` is set. |
+| `outgoing.customHeaders` | off | `enabled` and `headers`. Extra headers added to outgoing mail. |
+| `api.enabled` | `true` | The [JSON send API](/docs/guides/json-api). Also needs `MAIL_API_TOKEN`. |
+
+Values in `customHeaders.headers` can use `{queueId}` and `{sender}`. See [Outgoing headers](/docs/guides/sending-mail#outgoing-headers).
+
+### Queue and bounces
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `queue.maxConcurrent` | `10` | Deliveries at the same time. |
+| `queue.maxAgeHours` | `48` | Give up on a message after this long. |
+| `queue.retryDelaysMinutes` | `1, 5, 15, 30, 60, 120, 240` | Wait before each retry. The last value repeats. |
+| `bounces.notifySender` | `true` | Send the original sender a bounce report. |
+| `bounces.suppression.enabled` | `true` | Keep a list of addresses that hard-bounced. |
+| `bounces.suppression.days` | `30` | How long an address stays on the list. |
+| `bounces.trackingDays` | `7` | How long a sent message is remembered, so a late bounce can be matched. |
+| `bounces.smtpServer.enabled` | `true` | The bounce SMTP server. |
+| `bounces.httpServer.enabled` | `true` | The bounce HTTP server. |
+
+See [Bounces](/docs/guides/bounces).
+
+## `smtp-messages.json`
+
+Every reply the server sends is listed here by key:
+
+```json
+"MAILBOX_FULL": { "code": 552, "status": "5.2.2", "message": "Mailbox {recipient} is full" }
+```
+
+Change the text or the code and save. `{placeholders}` are filled in when the reply is sent. The status must match the class of the code, so `5xx` goes with `5.x.x`.
+
+| Key | Reply |
+|-----|-------|
+| `GREETING` | `220 2.0.0` The banner. |
+| `BOUNCE_GREETING` | `220 2.0.0` The banner of the bounce SMTP server. |
+| `MESSAGE_ACCEPTED` | `250 2.0.0` Mail accepted on port 25. |
+| `MESSAGE_QUEUED` | `250 2.0.0` Mail queued on port 587. `{id}` is the queue id. |
+| `BOUNCE_ACCEPTED` | `250 2.0.0` A bounce was accepted. |
+| `SERVICE_UNAVAILABLE` | `421 4.3.2` |
+| `RATE_LIMITED` | `421 4.7.0` `{ip}`, `{seconds}` |
+| `MAILBOX_BUSY` | `450 4.2.1` `{recipient}` |
+| `REVERSE_DNS_TEMPFAIL` | `450 4.7.25` `{ip}` |
+| `INTERNAL_ERROR` | `451 4.3.0` |
+| `SERVER_BUSY` | `451 4.3.2` The worker queue is full. |
+| `DNS_TEMPORARY_FAILURE` | `451 4.4.3` `{domain}` |
+| `SENDER_DOMAIN_TEMPFAIL` | `451 4.1.8` `{domain}` |
+| `SPF_TEMPFAIL`, `DKIM_TEMPFAIL`, `DMARC_TEMPFAIL` | `451 4.7.24`, `451 4.7.20`, `451 4.7.26` |
+| `INSUFFICIENT_STORAGE` | `452 4.3.1` |
+| `MAILBOX_FULL_TEMPORARY` | `452 4.2.2` `{recipient}` |
+| `TOO_MANY_RECIPIENTS` | `452 4.5.3` `{max}` |
+| `AUTH_METHOD_NOT_ALLOWED` | `504 5.5.4` XOAUTH2 is rejected. |
+| `AUTH_FAILED` | `535 5.7.8` |
+| `USER_NOT_FOUND` | `550 5.1.1` `{recipient}` |
+| `UNKNOWN_BOUNCE_ADDRESS` | `550 5.1.1` `{recipient}` |
+| `INVALID_SENDER`, `DISPOSABLE_SENDER` | `550 5.1.7` |
+| `SENDER_DOMAIN_UNROUTABLE` | `550 5.1.8` `{domain}` |
+| `MAILBOX_DISABLED` | `550 5.2.1` `{recipient}` |
+| `RELAY_DENIED` | `550 5.7.1` `{recipient}` |
+| `DKIM_FAILED` | `550 5.7.20` |
+| `SPF_FAILED` | `550 5.7.23` `{domain}` |
+| `REVERSE_DNS_FAILED` | `550 5.7.25` `{ip}` |
+| `DMARC_REJECT` | `550 5.7.26` `{domain}` |
+| `MAILBOX_FULL` | `552 5.2.2` `{recipient}` |
+| `MESSAGE_TOO_LARGE` | `552 5.3.4` `{maxSize}` |
+| `NO_VALID_RECIPIENTS` | `554 5.5.1` |
+
+<Callout title="Not every reply is here">
+  Replies that smtp-server sends itself, such as command syntax errors or `530 Authentication required`, are not in this file.
+</Callout>

@@ -4,6 +4,9 @@
   "pages": [
     "receiving-mail",
     "sending-mail",
+    "json-api",
+    "outbound-drivers",
+    "bounces",
     "pgp-encryption",
     "plugins",
     "calendar-invites"

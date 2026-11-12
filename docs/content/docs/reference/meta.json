@@ -3,6 +3,8 @@
   "defaultOpen": true,
   "pages": [
     "environment-variables",
+    "configuration-files",
+    "background-workers",
     "node-mta-api",
     "project-structure"
   ]

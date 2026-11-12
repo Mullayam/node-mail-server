@@ -1,0 +1,122 @@
+---
+title: Outbound drivers
+description: Choose how queued mail is delivered, the Node MTA, the Go MTA, an SMTP relay or the KumoMTA HTTP API.
+---
+
+The [outbound queue](/docs/guides/sending-mail#the-outbound-queue) hands each message to a driver. `OUTBOUND_DRIVER` in `server/.env` chooses which one. Retries, suppression and [bounces](/docs/guides/bounces) work the same for every driver.
+
+| Driver | What it does | Settings |
+|--------|--------------|----------|
+| `direct` (default) | The Node MTA delivers straight to the recipient's MX server. `node` is an alias. | none |
+| `go` | The Go MTA service (`server/go-mta`) delivers to the MX server. | `GO_MTA_URL`, `GO_MTA_TOKEN`, `GO_MTA_TIMEOUT_MS` |
+| `relay` | SMTP submission to another MTA, such as KumoMTA on a private network. | `OUTBOUND_RELAY_*` |
+| `kumo-http` | KumoMTA's HTTP injection API, `/api/inject/v1`. | `KUMO_HTTP_*` |
+
+If `OUTBOUND_DRIVER` is not set, the server uses `relay` when `OUTBOUND_RELAY_HOST` is set, and `direct` otherwise. A value that is not in the list stops the server at startup with a message naming the allowed values.
+
+<Callout title="KumoMTA stays private">
+  With `relay` or `kumo-http`, KumoMTA does not need to be reachable from the internet. Only the Node server talks to it. Node keeps ports 25 and 587.
+</Callout>
+
+If KumoMTA signs DKIM itself, leave `DKIM_PRIVATE_KEY` empty so the message is not signed twice.
+
+## Direct (Node MTA)
+
+Resolves the recipient's MX records and delivers over SMTP. This is the engine described in the [NodeMailerMTA API](/docs/reference/node-mta-api). It follows the recipient domain's MTA-STS policy.
+
+## Go MTA
+
+A small delivery service that uses only the Go standard library. Node posts each message to it and it reports a result for each recipient.
+
+```bash
+cd server/go-mta
+go build -o go-mta .
+GO_MTA_LISTEN=127.0.0.1:2580 GO_MTA_TOKEN=change-me GO_MTA_EHLO=smtp.example.com ./go-mta
+```
+
+Then set `OUTBOUND_DRIVER=go`, `GO_MTA_URL=http://127.0.0.1:2580` and the same `GO_MTA_TOKEN` in `server/.env`. A `Dockerfile` is included.
+
+| Setting | Description |
+|---------|-------------|
+| `GO_MTA_LISTEN` | Address to listen on. |
+| `GO_MTA_TOKEN` | Bearer token that Node must send. |
+| `GO_MTA_EHLO` | Name sent in `EHLO`. It must match the sending IP's PTR record. |
+| `GO_MTA_ROUTES` | Optional. `example.org=10.0.0.5:25` sends a domain to a fixed host instead of its MX server. |
+
+The service opens STARTTLS when the remote server offers it.
+
+| Request | Description |
+|---------|-------------|
+| `POST /v1/deliver` | Body `{ "from": "...", "to": ["..."], "raw": "<base64>" }`. Returns `{ "results": [{ "recipient", "success", "temporary", "status", "response", "remoteMta" }] }`. |
+| `GET /healthz` | Health check. |
+
+Keep it on a private network. The token is the only protection.
+
+## Relay (SMTP submission)
+
+Node connects to another SMTP server and submits the message as a client would. Connections are pooled.
+
+```env
+OUTBOUND_DRIVER=relay
+OUTBOUND_RELAY_HOST=kumomta
+OUTBOUND_RELAY_PORT=587
+OUTBOUND_RELAY_USER=
+OUTBOUND_RELAY_PASS=
+OUTBOUND_RELAY_TLS=verify
+OUTBOUND_RELAY_MAX_CONNECTIONS=5
+```
+
+`OUTBOUND_RELAY_TLS` sets how the connection uses TLS:
+
+| Value | Meaning |
+|-------|---------|
+| `verify` | Requires TLS with a valid certificate. This is the default. |
+| `insecure` | Encrypts, but accepts a self-signed certificate. This is the default when the relay host is `localhost`, `127.0.0.1` or `::1`. |
+| `none` | A plain connection. Use it only on a trusted private network. |
+
+Use `OUTBOUND_RELAY_CA_PATH` when the relay's certificate is signed by your own certificate authority.
+
+## KumoMTA HTTP API
+
+Node posts each message to KumoMTA's injection endpoint.
+
+```env
+OUTBOUND_DRIVER=kumo-http
+KUMO_HTTP_URL=http://kumomta:8000
+KUMO_HTTP_USER=
+KUMO_HTTP_PASS=
+KUMO_HTTP_TIMEOUT_MS=30000
+KUMO_HTTP_STATIC_CONTENT=true
+```
+
+The request is `POST /api/inject/v1` with:
+
+```json
+{
+  "envelope_sender": "bounce+3f2c9a52@bounces.example.com",
+  "recipients": [{ "email": "user@example.com" }, { "email": "team@example.com" }],
+  "content": "<the raw MIME message>",
+  "template_dialect": "Static"
+}
+```
+
+`KUMO_HTTP_USER` and `KUMO_HTTP_PASS` are sent as Basic authentication when set.
+
+## What KumoMTA needs
+
+The JSON form that the [JSON send API](/docs/guides/json-api) accepts is only a way to create a MIME message. The server builds that message first and then sends the finished message through the driver. This is what KumoMTA receives:
+
+| | `relay` (SMTP) | `kumo-http` |
+|---|---|---|
+| Message | The raw MIME message, unchanged | The raw MIME message as the `content` string |
+| Sender | `MAIL FROM` | `envelope_sender` (required) |
+| To, Cc, Bcc | One `RCPT TO` for each address. To and Cc stay in the message headers | Every address in `recipients` (required). To and Cc stay in the message headers |
+| Access | `relay_hosts` and SMTP AUTH on the listener | `trusted_hosts` on the HTTP listener, and optional Basic authentication |
+
+- `kumo-http` sends `template_dialect: "Static"`, so KumoMTA does not run the message through its template engine. A `{{` in a message would otherwise be changed. KumoMTA older than 2025.12.02 does not know this field. Set `KUMO_HTTP_STATIC_CONTENT=false` for those versions.
+- `kumo-http` sends the message as JSON text, so it needs valid UTF-8. Use `relay` for 8-bit messages in other character sets.
+- KumoMTA's own JSON builder form, where `content` is an object, has no Cc field. That is why the server builds the MIME message itself and always sends it raw.
+- The KumoMTA documentation does not say how a raw message's own To and Cc headers are handled for each recipient. Send one test message through your KumoMTA version, with To, Cc and Bcc recipients, before relying on it.
+- For mail you send with a bounce address, KumoMTA must accept the `bounce+...@` sender and a null sender. See [Bounces](/docs/guides/bounces#kumomta-events) to receive KumoMTA's delivery events.
+
+See [KumoMTA](/docs/outbound/overview) to run it.
