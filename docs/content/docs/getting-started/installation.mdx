@@ -1,0 +1,95 @@
+---
+title: Installation
+description: Clone the repository, configure it and start the server with Bun, Node or Docker.
+---
+
+Any package manager works. The project's own scripts use [Bun](https://bun.sh).
+
+## Get the code
+
+```bash
+git clone https://github.com/Mullayam/node-mail-server.git
+cd node-mail-server
+```
+
+The Node mail server lives in `server/`. Helper scripts are in `scripts/`.
+
+## Option 1: guided setup
+
+The setup script asks three questions, writes `server/.env` and generates your DNS records.
+
+```bash
+chmod +x scripts/run.sh
+./scripts/run.sh
+```
+
+It asks for:
+
+1. The mail server's domain name (it creates `mx.` and `mail.` hostnames from it).
+2. The mail server's IP address.
+3. The domain that this server will handle mail for.
+
+It then builds the project with `tsc` and writes `server/records.json`. See [DNS records](/docs/getting-started/dns-records) for what to do with it.
+
+<Callout title="Needs the TypeScript compiler">
+  The script runs `tsc -p .`, so `tsc` has to be on your `PATH`. Install it with `bun add -g typescript` or `npm install -g typescript` if it is missing.
+</Callout>
+
+## Option 2: manual setup
+
+```bash
+cd server
+cp .env.example .env      # then edit the values
+bun install
+bun run build             # do not use `bun build`
+```
+
+Start it:
+
+```bash
+bun run dev               # development, restarts on changes
+bun run start             # production, needs root for ports 25 and 587
+```
+
+If `bun run start` cannot bind the ports, run it with elevated rights:
+
+```bash
+sudo node ./build/main.js
+```
+
+<Callout title="If you see Cannot find module '@/...'">
+  The code uses the `@/` path alias, and TypeScript does not rewrite aliases in its output. If `node build/main.js` fails with this error, run the TypeScript source with Bun instead: `bun src/main.ts` from the `server/` folder. The Docker image does the same.
+</Callout>
+
+Ports 25 and 587 are below 1024, so on Linux the process needs root or the `CAP_NET_BIND_SERVICE` capability.
+
+## Option 3: Docker
+
+```bash
+cp server/.env.example server/.env
+cp outbound/.env.example outbound/.env
+cp outbound/policy/users.example.lua outbound/policy/users.lua
+docker compose -f deploy/docker-compose.yml up -d
+```
+
+See [Docker Compose](/docs/deployment/docker-compose) for what each service does.
+
+## What starts
+
+Starting the server opens two SMTP listeners:
+
+| Listener | Port | Role |
+|----------|------|------|
+| `IncomingServerConfig` | 25 | Receives mail for your domains. |
+| `OutgoingServerConfig` | 587 | Accepts authenticated mail for delivery. |
+
+## Next
+
+<Cards>
+  <Card title="DNS records" href="/docs/getting-started/dns-records">
+    Publish the records that make other servers trust yours.
+  </Card>
+  <Card title="Environment variables" href="/docs/reference/environment-variables">
+    Every setting, with defaults.
+  </Card>
+</Cards>
