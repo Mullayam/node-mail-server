@@ -2,8 +2,8 @@ import * as crypto from "crypto";
 import moment from "moment";
 import { join } from "path";
 
-export let Tokens = new Map();
-export let BlacklistedTokens: string[] = [];
+export const Tokens = new Map();
+export const BlacklistedTokens: string[] = [];
 export const SetAppRoutes = new Map();
 type Units = "d" | "h" | "m" | "w";
 export type TTL = `${number}${Units}`;
@@ -114,7 +114,7 @@ class Utils {
 	 * @return {object} The resulting object.
 	 */
 	QueryToObject(query: string): object {
-		let NewObject = {};
+		const NewObject = {};
 		query.split("&").map((item) => {
 			const [key, value] = item.split("=");
 			Object.assign(NewObject, Object.fromEntries([[key, value]]));
@@ -140,7 +140,7 @@ class Utils {
 	 * @return {string} - The formatted date string.
 	 */
 	ConvertDateWordsToDate(str: string): string {
-		let newDate;
+		let newDate: Date;
 		if (str === "Latest") {
 			newDate = moment().subtract(10, "minutes").toDate();
 		} else if (str === "LastHour") {
@@ -192,7 +192,7 @@ class Utils {
 	 * @return {string[]} an array containing the keys and values of the object
 	 */
 	ObjectKeysAndValues(obj: string): string[] {
-		let keys = Object.keys(JSON.parse(obj));
+		const keys = Object.keys(JSON.parse(obj));
 		const PureObject = keys.map((key) => {
 			return JSON.parse(JSON.parse(obj)[key]);
 		});
@@ -223,14 +223,11 @@ class Utils {
 			.replace(/^-+|-+$/g, "");
 	}
 	uuid_v4() {
-		return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
-			/[xy]/g,
-			function (c) {
-				var r = (Math.random() * 16) | 0,
-					v = c == "x" ? r : (r & 0x3) | 0x8;
-				return v.toString(16);
-			},
-		);
+		return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+			var r = (Math.random() * 16) | 0,
+				v = c === "x" ? r : (r & 0x3) | 0x8;
+			return v.toString(16);
+		});
 	}
 	Md5Checksum(content: string): string {
 		return crypto.createHash("md5").update(content).digest("hex");
