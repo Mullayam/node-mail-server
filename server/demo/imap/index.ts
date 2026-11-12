@@ -1,4 +1,5 @@
-import Imap from 'node-imap'
+import Imap from "node-imap";
+
 const eml = `Return-Path: <sender@example.com>
 Delivered-To: recipient@testdomain.com
 Received: from mail.example.com (mail.example.com [192.0.2.1])
@@ -67,65 +68,61 @@ John Doe</p>
 </body>
 </html>
 
-------=_Part_12345_67890.1234567890--`
+------=_Part_12345_67890.1234567890--`;
 var imap = new Imap({
-
-  user: "user1@example.com",
-  password: "pass",
-  host: 'localhost',
-  port: 143,
-  tls: false,
-  debug(info) {
-    console.log(info)
-  },
-
+	user: "user1@example.com",
+	password: "pass",
+	host: "localhost",
+	port: 143,
+	tls: false,
+	debug(info) {
+		console.log(info);
+	},
 });
-imap.once('ready', function () {
-  imap.getBoxes(function (err, boxes) {
-    if (err) throw err;
-    console.log('Mailboxes:', boxes);
+imap.once("ready", () => {
+	imap.getBoxes((err, boxes) => {
+		if (err) throw err;
+		console.log("Mailboxes:", boxes);
 
-    imap.openBox('Spam', false, function (err, box) {
-      if (err) throw err;
-      console.log("Opened box:", box);
-      if (box.messages.total === 0) {
-        console.log("No messages in inbox. Appending a test message.");
-        // imap.append(eml, { mailbox: 'INBOX', flags: ['\\Seen'] },
-        //   function (err) {
-        //     if (err) throw err;
-        //     console.log('Message appended!');
-        //   }
-        // );
+		imap.openBox("Spam", false, (err, box) => {
+			if (err) throw err;
+			console.log("Opened box:", box);
+			if (box.messages.total === 0) {
+				console.log("No messages in inbox. Appending a test message.");
+				// imap.append(eml, { mailbox: 'INBOX', flags: ['\\Seen'] },
+				//   function (err) {
+				//     if (err) throw err;
+				//     console.log('Message appended!');
+				//   }
+				// );
+			}
+			// imap.seq.fetch(box.messages.total === 0 ? "*" : box.messages.total + ':*', { bodies: '' })
+			//   .on('message', function (msg, seqno) {
 
-      }
-      // imap.seq.fetch(box.messages.total === 0 ? "*" : box.messages.total + ':*', { bodies: '' })
-      //   .on('message', function (msg, seqno) {
+			//     // msg.on('body', function (stream, info) {
+			//     //   let buffer = '';
+			//     //   stream.on('data', function (chunk) {
+			//     //     buffer += chunk.toString();
+			//     //   });
+			//     //   stream.once('end', function () {
+			//     //     console.log('Message', seqno, 'body', buffer);
+			//     //   });
+			//     // });
 
-      //     // msg.on('body', function (stream, info) {
-      //     //   let buffer = '';
-      //     //   stream.on('data', function (chunk) {
-      //     //     buffer += chunk.toString();
-      //     //   });
-      //     //   stream.once('end', function () {
-      //     //     console.log('Message', seqno, 'body', buffer);
-      //     //   });
-      //     // });
-
-      //   }).on('error', function (err) {
-      //     console.log('Error fetching messages:', err);
-      //   });
-      //   // imap.end();
-    });
-  });
-
+			//   }).on('error', function (err) {
+			//     console.log('Error fetching messages:', err);
+			//   });
+			//   // imap.end();
+		});
+	});
 });
-imap.once('mail', num => console.log("New mail:", num))
-imap.once('error', function (err) {
-  console.log(err);
+imap.once("mail", (num) => console.log("New mail:", num));
+imap.once("error", (err) => {
+	console.log(err);
 });
 
-imap.once('end', function () {
-  console.log('Connection ended');
+imap.once("end", () => {
+	console.log("Connection ended");
 });
 
 imap.connect();
