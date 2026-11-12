@@ -1,0 +1,67 @@
+---
+title: Project structure
+description: How the repository is laid out, and which files hold secrets.
+---
+
+## Repository
+
+```text
+node-mail-server/
+├── server/          Node mail server (receiving and sending), plus imap/ and demo/
+├── outbound/        KumoMTA sending engine
+│   ├── policy/      Lua and TOML, mounted at /opt/kumomta/etc/policy
+│   ├── .env.example
+│   └── README.md
+├── deploy/          docker-compose.yml
+├── scripts/         setup.js, send-mail.js, run.sh
+├── assets/images/   Screenshots used by the README
+├── docs/            This documentation site
+└── README.md
+```
+
+## Node mail server
+
+```text
+server/
+├── src/             TypeScript source
+├── imap/            Go IMAP server (Gluon)
+├── demo/            Small example projects
+├── public/          Static files and icons
+├── Dockerfile
+├── .env.example
+├── package.json
+└── tsconfig.json
+```
+
+### `server/src`
+
+| Folder | Contents |
+|--------|----------|
+| `main.ts`, `start.ts` | `main.ts` starts the servers. `start.ts` generates DNS records. |
+| `interfaces/` | TypeScript types for DNS records, mail data and PGP keys. |
+| `lib/` | Helpers (email address parsing and other utilities), logging and SMTP type extensions. |
+| `server/` | `IncomingServer.ts` (port 25) and `OutgoingServer.ts` (port 587). |
+| `server/config/` | DNS checking and generation, mail composing (`MailComposer.ts`), authentication (`MailAuth.ts`), spam filtering and PGP in `encryption/`. |
+| `server/mta/` | Mail delivery: `node-mta.ts` and the outbound queue. |
+| `server/plugins/` | Filters, image proxy, rate limiter and tracking protection. |
+| `services/` | `IncomingMailHandler.ts`, `OutgoingMailHandler.ts`, `IcsEvents.ts` and `MeetingService.ts`. |
+
+## Files that hold secrets
+
+These are in `.gitignore`. Commit only the `.example` versions.
+
+| File | Contains |
+|------|----------|
+| `server/.env` | Hostnames, TLS paths, DKIM and PGP keys. |
+| `outbound/.env` | KumoMTA settings, DKIM service key, webhook secret. |
+| `outbound/policy/users.lua` | SMTP usernames and passwords. Start from `users.example.lua`. |
+| `server/records.json` | Generated DNS records, **including the DKIM private key**. |
+| `*.key`, `*.pem`, `outbound/dkim/` | Private keys and certificates. |
+
+## Scripts
+
+| Script | What it does |
+|--------|--------------|
+| `scripts/run.sh` | Runs `setup.js`. |
+| `scripts/setup.js` | Asks for your domain and IP, writes `server/.env` and generates DNS records. |
+| `scripts/send-mail.js` | Sends one DKIM-signed test message straight to a recipient's MX server. |
