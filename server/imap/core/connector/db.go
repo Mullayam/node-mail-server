@@ -2,124 +2,287 @@ package connector
 
 import (
 	"context"
-	"database/sql"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/ProtonMail/gluon/connector"
 	"github.com/ProtonMail/gluon/imap"
+
+	"imap/internal/directorykind"
+	"imap/internal/quota"
+	"imap/internal/storage"
 )
 
-// Implements a sample IMAP connector using a SQL database as the backend.
-// For Reference See DummyConnector in dummy.go
+// Implements Gluon's connector.Connector for one account. Logins are checked
+// against the directory; every mailbox and message operation goes to the
+// storage engine (internal/storage), which is where "dir", "postgres" or your
+// own engine plugs in. For reference see DummyConnector in Gluon's
+// connector/dummy.go.
 type MyDBConnector struct {
-	db      *sql.DB
 	email   string
+	dir     directorykind.Directory
+	engine  storage.Engine
+	quota   *quota.Manager
 	updates chan imap.Update
+	closed  sync.Once
 
 	user struct {
-		id    imap.UserID
+		id    string // Gluon user ID
 		email string
 	}
 
 	allowUnknownMailbox        bool
 	folderPrefix, labelsPrefix string
-	updatesAllowedToFail       int32
-	queueLock                  sync.Mutex
-	queue                      []imap.Update
 	mailboxVisibilities        map[imap.MailboxID]imap.MailboxVisibility
 }
 
-func NewConnector(db *sql.DB, email string) *MyDBConnector {
-	return &MyDBConnector{
-		db:                  db,
-		email:               email,
+// The compiler checks that MyDBConnector has every method Gluon's
+// connector.Connector needs. A Gluon update that adds one fails the build here.
+var _ connector.Connector = (*MyDBConnector)(nil)
+
+var (
+	defaultFlags     = imap.NewFlagSet(imap.FlagSeen, imap.FlagFlagged, imap.FlagDeleted)
+	defaultPermFlags = imap.NewFlagSet(imap.FlagSeen, imap.FlagFlagged, imap.FlagDeleted)
+	defaultAttrs     = imap.NewFlagSet()
+)
+
+func NewConnector(email string, dir directorykind.Directory, engine storage.Engine, q *quota.Manager) *MyDBConnector {
+	c := &MyDBConnector{
+		email:               directorykind.Normalize(email),
+		dir:                 dir,
+		engine:              engine,
+		quota:               q,
 		updates:             make(chan imap.Update, 500),
-		user:                nil,
 		allowUnknownMailbox: true,
 		folderPrefix:        "",
 		labelsPrefix:        "",
 		mailboxVisibilities: make(map[imap.MailboxID]imap.MailboxVisibility),
 	}
+	c.user.email = c.email
+	return c
+}
+
+// Sync makes sure the account has an INBOX in the storage engine. For a user
+// Gluon has not seen before (fresh), it also announces every stored mailbox
+// and message, so Gluon's cache matches the storage. Placeholder engines that
+// cannot list mailboxes are skipped.
+func (c *MyDBConnector) Sync(ctx context.Context, fresh bool) error {
+	mboxes, err := c.engine.ListMailboxes(ctx, c.email)
+	if errors.Is(err, storage.ErrNotImplemented) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	var created []storage.Mailbox
+	if !slices.ContainsFunc(mboxes, isInbox) {
+		id, err := c.engine.CreateMailbox(ctx, c.email, []string{imap.Inbox})
+		if err != nil {
+			return fmt.Errorf("create INBOX: %w", err)
+		}
+		inbox := storage.Mailbox{ID: id, Name: []string{imap.Inbox}}
+		mboxes = append(mboxes, inbox)
+		created = append(created, inbox)
+	}
+
+	announce := created
+	if fresh {
+		announce = mboxes
+	}
+	for _, m := range announce {
+		c.updates <- imap.NewMailboxCreated(gluonMailbox(m))
+	}
+	if !fresh {
+		return nil
+	}
+
+	// A message can be in several mailboxes: announce it once with all of them.
+	type entry struct {
+		msg   storage.Message
+		boxes []imap.MailboxID
+	}
+	byID := map[string]*entry{}
+	var order []string
+	for _, m := range mboxes {
+		msgs, err := c.engine.ListMessages(ctx, c.email, m.ID)
+		if err != nil {
+			return err
+		}
+		for _, msg := range msgs {
+			e, seen := byID[msg.ID]
+			if !seen {
+				e = &entry{msg: msg}
+				byID[msg.ID] = e
+				order = append(order, msg.ID)
+			}
+			e.boxes = append(e.boxes, imap.MailboxID(m.ID))
+		}
+	}
+
+	const chunk = 100
+	var batch []*imap.MessageCreated
+	for i, id := range order {
+		literal, err := c.engine.GetMessage(ctx, c.email, id)
+		if err != nil {
+			return err
+		}
+		parsed, err := imap.NewParsedMessage(literal)
+		if err != nil {
+			return fmt.Errorf("parse message %s: %w", id, err)
+		}
+		e := byID[id]
+		batch = append(batch, &imap.MessageCreated{
+			Message:       imap.Message{ID: imap.MessageID(id), Flags: imap.NewFlagSetFromSlice(e.msg.Flags), Date: e.msg.Date},
+			Literal:       literal,
+			MailboxIDs:    e.boxes,
+			ParsedMessage: parsed,
+		})
+		if len(batch) == chunk || i == len(order)-1 {
+			c.updates <- imap.NewMessagesCreated(true, batch...)
+			batch = nil
+		}
+	}
+	return nil
+}
+
+func isInbox(m storage.Mailbox) bool {
+	return len(m.Name) == 1 && strings.EqualFold(m.Name[0], imap.Inbox)
+}
+
+func gluonMailbox(m storage.Mailbox) imap.Mailbox {
+	return imap.Mailbox{
+		ID:             imap.MailboxID(m.ID),
+		Name:           m.Name,
+		Flags:          defaultFlags,
+		PermanentFlags: defaultPermFlags,
+		Attributes:     defaultAttrs,
+	}
 }
 
 // Init the connector. The cache pointer provide here should not be used with any of the other methods.
-func (c *MyDBConnector) Init(ctx context.Context, cache imap.IMAPState) error {
+func (c *MyDBConnector) Init(ctx context.Context, cache connector.IMAPState) error {
 	return nil
 }
 
 // Authorize returns whether the given username/password combination are valid for this connector.
+// Only this account's own login counts, and only while IMAP is enabled for it.
 func (c *MyDBConnector) Authorize(ctx context.Context, username string, password []byte) bool {
-	return nil
+	if directorykind.Normalize(username) != c.email {
+		return false
+	}
+	u, err := c.dir.Authenticate(ctx, username, string(password))
+	return err == nil && directorykind.IMAPAllowed(u)
 }
 
 // CreateMailbox creates a mailbox with the given name.
-func (c *MyDBConnector) CreateMailbox(ctx context.Context, cache imap.IMAPStateWrite, name []string) (imap.Mailbox, error) {
-	return nil
+func (c *MyDBConnector) CreateMailbox(ctx context.Context, cache connector.IMAPStateWrite, name []string) (imap.Mailbox, error) {
+	id, err := c.engine.CreateMailbox(ctx, c.email, name)
+	if err != nil {
+		return imap.Mailbox{}, err
+	}
+	return imap.Mailbox{
+		ID:             imap.MailboxID(id),
+		Name:           name,
+		Flags:          defaultFlags,
+		PermanentFlags: defaultPermFlags,
+		Attributes:     defaultAttrs,
+	}, nil
 }
 
 // GetMessageLiteral is intended to be used by Gluon when, for some reason, the local cached data no longer exists.
 // Note: this can get called from different go routines.
 func (c *MyDBConnector) GetMessageLiteral(ctx context.Context, id imap.MessageID) ([]byte, error) {
-	return nil
+	return c.engine.GetMessage(ctx, c.email, string(id))
 }
 
 // GetMailboxVisibility can be used to retrieve the visibility of mailboxes for connected clients.
 func (c *MyDBConnector) GetMailboxVisibility(ctx context.Context, mboxID imap.MailboxID) imap.MailboxVisibility {
-	return nil
+	if v, ok := c.mailboxVisibilities[mboxID]; ok {
+		return v
+	}
+	return imap.Visible
 }
 
 // UpdateMailboxName sets the name of the mailbox with the given ID.
-func (c *MyDBConnector) UpdateMailboxName(ctx context.Context, cache imap.IMAPStateWrite, mboxID imap.MailboxID, newName []string) error {
-	return nil
+func (c *MyDBConnector) UpdateMailboxName(ctx context.Context, cache connector.IMAPStateWrite, mboxID imap.MailboxID, newName []string) error {
+	return c.engine.RenameMailbox(ctx, c.email, string(mboxID), newName)
 }
 
 // DeleteMailbox deletes the mailbox with the given ID.
-func (c *MyDBConnector) DeleteMailbox(ctx context.Context, cache imap.IMAPStateWrite, mboxID imap.MailboxID) error {
-	return nil
+func (c *MyDBConnector) DeleteMailbox(ctx context.Context, cache connector.IMAPStateWrite, mboxID imap.MailboxID) error {
+	return c.engine.DeleteMailbox(ctx, c.email, string(mboxID))
 }
 
-// CreateMessage creates a new message on the remote.
-func (c *MyDBConnector) CreateMessage(ctx context.Context, cache imap.IMAPStateWrite, mboxID imap.MailboxID, literal []byte, flags imap.FlagSet, date time.Time) (imap.Message, []byte, error) {
-	return nil
+// CreateMessage creates a new message on the remote. The quota is checked first.
+func (c *MyDBConnector) CreateMessage(ctx context.Context, cache connector.IMAPStateWrite, mboxID imap.MailboxID, literal []byte, flags imap.FlagSet, date time.Time) (imap.Message, []byte, error) {
+	var override *quota.Limit
+	if u, err := c.dir.Get(ctx, c.email); err == nil {
+		override = u.Quota
+	}
+	if err := c.quota.Check(ctx, c.email, c.quota.Effective(override), int64(len(literal))); err != nil {
+		return imap.Message{}, nil, err
+	}
+	id, err := c.engine.CreateMessage(ctx, c.email, string(mboxID), literal, flags.ToSlice(), date)
+	if err != nil {
+		return imap.Message{}, nil, err
+	}
+	return imap.Message{ID: imap.MessageID(id), Flags: flags, Date: date}, literal, nil
 }
 
 // AddMessagesToMailbox adds the given messages to the given mailbox.
-func (c *MyDBConnector) AddMessagesToMailbox(ctx context.Context, cache imap.IMAPStateWrite, messageIDs []imap.MessageID, mboxID imap.MailboxID) error {
-	return nil
+func (c *MyDBConnector) AddMessagesToMailbox(ctx context.Context, cache connector.IMAPStateWrite, messageIDs []imap.MessageID, mboxID imap.MailboxID) error {
+	return c.engine.AddToMailbox(ctx, c.email, ids(messageIDs), string(mboxID))
 }
 
 // RemoveMessagesFromMailbox removes the given messages from the given mailbox.
-func (c *MyDBConnector) RemoveMessagesFromMailbox(ctx context.Context, cache imap.IMAPStateWrite, messageIDs []imap.MessageID, mboxID imap.MailboxID) error {
-	return nil
+func (c *MyDBConnector) RemoveMessagesFromMailbox(ctx context.Context, cache connector.IMAPStateWrite, messageIDs []imap.MessageID, mboxID imap.MailboxID) error {
+	return c.engine.RemoveFromMailbox(ctx, c.email, ids(messageIDs), string(mboxID))
 }
 
 // MoveMessages removes the given messages from one mailbox and adds them to the another mailbox.
 // Returns true if the original messages should be removed from mboxFromID (e.g: Distinguishing between labels and folders).
-func (c *MyDBConnector) MoveMessages(ctx context.Context, cache imap.IMAPStateWrite, messageIDs []imap.MessageID, mboxFromID, mboxToID imap.MailboxID) (bool, error) {
-	return nil
+func (c *MyDBConnector) MoveMessages(ctx context.Context, cache connector.IMAPStateWrite, messageIDs []imap.MessageID, mboxFromID, mboxToID imap.MailboxID) (bool, error) {
+	if err := c.engine.MoveMessages(ctx, c.email, ids(messageIDs), string(mboxFromID), string(mboxToID)); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // MarkMessagesSeen sets the seen value of the given messages.
-func (c *MyDBConnector) MarkMessagesSeen(ctx context.Context, cache imap.IMAPStateWrite, messageIDs []imap.MessageID, seen bool) error {
-	return nil
+func (c *MyDBConnector) MarkMessagesSeen(ctx context.Context, cache connector.IMAPStateWrite, messageIDs []imap.MessageID, seen bool) error {
+	return c.engine.SetFlag(ctx, c.email, ids(messageIDs), imap.FlagSeen, seen)
 }
 
 // MarkMessagesFlagged sets the flagged value of the given messages.
-func (c *MyDBConnector) MarkMessagesFlagged(ctx context.Context, cache imap.IMAPStateWrite, messageIDs []imap.MessageID, flagged bool) error {
-	return nil
+func (c *MyDBConnector) MarkMessagesFlagged(ctx context.Context, cache connector.IMAPStateWrite, messageIDs []imap.MessageID, flagged bool) error {
+	return c.engine.SetFlag(ctx, c.email, ids(messageIDs), imap.FlagFlagged, flagged)
 }
 
 // MarkMessagesForwarded sets the forwarded value of the give messages.
-func (c *MyDBConnector) MarkMessagesForwarded(ctx context.Context, cache imap.IMAPStateWrite, messageIDs []imap.MessageID, forwarded bool) error {
-	return nil
+func (c *MyDBConnector) MarkMessagesForwarded(ctx context.Context, cache connector.IMAPStateWrite, messageIDs []imap.MessageID, forwarded bool) error {
+	return c.engine.SetFlag(ctx, c.email, ids(messageIDs), imap.XFlagDollarForwarded, forwarded)
 }
 
 // GetUpdates returns a stream of updates that the gluon server should apply.
 func (c *MyDBConnector) GetUpdates() <-chan imap.Update {
-	return nil
+	return c.updates
 }
 
 // Close the connector will no longer be used and all resources should be closed/released.
 func (c *MyDBConnector) Close(ctx context.Context) error {
+	c.closed.Do(func() { close(c.updates) })
 	return nil
+}
+
+func ids(in []imap.MessageID) []string {
+	out := make([]string, len(in))
+	for i, id := range in {
+		out[i] = string(id)
+	}
+	return out
 }
