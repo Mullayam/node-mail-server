@@ -1,0 +1,60 @@
+---
+title: Receiving mail
+description: What the server does with a message that arrives on port 25.
+---
+
+The receiving server (`IncomingServer` and `IncomingMailHandler`) listens on port 25 and handles mail from other servers. Authentication is disabled on this port, because senders are other mail servers, not your users.
+
+## The pipeline
+
+When an email arrives on port 25, it goes through three SMTP stages.
+
+### 1. MAIL FROM
+
+- Applies a per-IP rate limit. When a client goes over `INCOMING_MAX_MESSAGES_PER_MINUTE`, the server answers with a temporary `421` error, so a legitimate sender retries later.
+- Rejects `.temp@` addresses.
+
+### 2. RCPT TO
+
+- Accepts a null sender, because delivery failure notices (bounces) are sent that way.
+- Rejects the message only if the sender's domain has no MX, A or AAAA record.
+- Answers with a temporary `451` if DNS is down, so the sender retries.
+
+### 3. DATA
+
+- Enforces the 10 MB size limit.
+- Runs DKIM, SPF and DMARC checks with `mailauth`, against the connecting client's IP address and its HELO name, on the original unmodified message.
+- Rejects with `550` only when DMARC fails and the sender's policy is `reject`.
+- Removes any `X-AE-*` headers and forged `Authentication-Results` headers that the sender supplied, then adds the server's own.
+- Seals the message with ARC headers when `ARC_PRIVATE_KEY_PATH` and `ARC_SIGNING_DOMAIN` are set. This keeps authentication working when mail is forwarded.
+- Encrypts the final message with PGP for storage when the PGP keys are set. See [PGP encryption](/docs/guides/pgp-encryption).
+
+<Callout title="Custom headers are added after the checks">
+  The `X-AE-*` headers are added only after authentication has finished, so they never break a DKIM signature.
+</Callout>
+
+## Settings
+
+| Variable | Purpose |
+|----------|---------|
+| `INCOMING_MAIL_HOST` | Hostname the receiving server announces. |
+| `INCOMING_MAX_MESSAGES_PER_MINUTE` | Per-IP rate limit on port 25. |
+| `ARC_PRIVATE_KEY_PATH`, `ARC_SIGNING_DOMAIN`, `ARC_SELECTOR` | Optional ARC sealing. |
+| `PGP_*` | Optional encryption at rest. |
+
+See [Environment variables](/docs/reference/environment-variables) for defaults.
+
+## Components involved
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `IncomingMailHandler` | `server/src/services/IncomingMailHandler.ts` | Handles MAIL FROM, RCPT TO and DATA. |
+| `MailAuth` | `server/src/server/config/MailAuth.ts` | DKIM verification, SPF, DMARC policy, MTA-STS and ARC sealing. |
+| `MailComposer` | `server/src/server/config/MailComposer.ts` | Builds RFC 5322 headers and MIME messages. |
+| `DNSChecker` | `server/src/server/config/DnsChecker.ts` | Resolves MX, SPF, DKIM, DMARC and TXT records and checks TCP ports. |
+| `SpamFilteration` | `server/src/server/config/SpamFilteration.ts` | Per-IP rate limiting with temporary blocks for abusive clients. |
+| `PGPService` | `server/src/server/config/encryption/PGPService.ts` | Key generation and message encryption. |
+
+<Callout title="Storage is still in progress">
+  The server verifies, labels and encrypts incoming mail. Saving it to a database and serving it over IMAP is part of the IMAP work, so see [IMAP](/docs/imap/overview) for what is ready.
+</Callout>
