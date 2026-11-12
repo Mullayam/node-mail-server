@@ -1,0 +1,101 @@
+---
+title: Environment variables
+description: Every setting for the Node mail server and for KumoMTA, with defaults.
+---
+
+Settings are read from `.env` files. Copy the example file and edit it:
+
+| Component | Copy | To |
+|-----------|------|----|
+| Node mail server | `server/.env.example` | `server/.env` |
+| KumoMTA | `outbound/.env.example` | `outbound/.env` |
+
+Both `.env` files are in `.gitignore`. `server/.env.example` is always the most current list.
+
+## Node mail server (`server/.env`)
+
+### Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INCOMING_MAIL_HOST` | none | Hostname of the receiving server, for example `mx.example.com`. Also used for the MX record. |
+| `OUTGOING_MAIL_HOST` | `INCOMING_MAIL_HOST` | Hostname of the sending server, for example `mail.example.com`. |
+| `MAIL_SERVER_IP` | none | The server's public IP address. Used to build the SPF record. |
+| `MAX_EMAILS_PER_MINUTE` | `5` | Rate limit for the submission port. |
+| `INCOMING_MAX_MESSAGES_PER_MINUTE` | `100` | Per-IP rate limit on port 25. Clients over the limit get a temporary `421`. |
+| `DOMAIN_NAME` | none | The domain to generate DNS records for. Only used by the generator (`start.ts`), which the setup script sets. |
+
+### TLS
+
+| Variable | Description |
+|----------|-------------|
+| `TLS_PRIVATE_KEY_PATH` | Path to the private key, for example `/etc/letsencrypt/live/mail.example.com/privkey.pem`. |
+| `TLS_CERTFICATE_PATH` | Path to the certificate chain. The name is spelled this way in the code. |
+
+See [TLS certificates](/docs/getting-started/tls-certificates).
+
+### DKIM
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DKIM_PRIVATE_KEY` | none | Private key used to sign outgoing mail. Write line breaks as `\n`. |
+| `DKIM_SELECTOR` | `default` | The selector in your DKIM DNS record. |
+
+### PGP
+
+| Variable | Description |
+|----------|-------------|
+| `PGP_PRIVATE_KEY` | Armored private key. |
+| `PGP_PUBLIC_KEY` | Armored public key. |
+| `PGP_REVOCATION_CERTIFICATE` | Armored revocation certificate. |
+| `PGP_PASSPHRASE` | Passphrase for the private key. |
+
+See [PGP encryption](/docs/guides/pgp-encryption).
+
+### Outbound queue
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAIL_SPOOL_DIR` | `./spool` | Where queued mail is stored. |
+| `MAX_CONCURRENT_DELIVERIES` | `10` | How many deliveries run at the same time. |
+| `MAIL_QUEUE_MAX_AGE_HOURS` | `48` | Give up on a message after this many hours. |
+
+### Relay (optional)
+
+Set `OUTBOUND_RELAY_HOST` to send through a relay such as KumoMTA instead of delivering directly.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OUTBOUND_RELAY_HOST` | empty | Relay hostname. Leave empty for direct delivery. |
+| `OUTBOUND_RELAY_PORT` | `587` | Relay port. |
+| `OUTBOUND_RELAY_USER` | empty | Relay username. |
+| `OUTBOUND_RELAY_PASS` | empty | Relay password. |
+| `OUTBOUND_RELAY_CA_PATH` | empty | Certificate authority file, if the relay uses your own CA. |
+
+### ARC (optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ARC_PRIVATE_KEY_PATH` | empty | Path to the ARC signing key. |
+| `ARC_SIGNING_DOMAIN` | empty | Domain that signs the ARC headers. |
+| `ARC_SELECTOR` | `default` | ARC selector. |
+
+ARC sealing is on only when both the key path and the signing domain are set.
+
+## KumoMTA (`outbound/.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KUMOMTA_HOSTNAME` | `mail.enjoys.in` | Hostname for the SMTP banner and EHLO. It must match the server's PTR record. |
+| `KUMOMTA_SOURCE_IPS` | unset | Comma-separated outbound IPs. Leave unset to use the default route. |
+| `USE_RELAY` | `true` when unset | `true` checks the sender's domain against `domains.lua` and DKIM-signs. `false` skips both. |
+| `DKIM_BACKEND` | `file` | Where DKIM keys come from: `file`, `http` or `redis`. |
+| `DKIM_SELECTOR` | `default` | DKIM selector. |
+| `DKIM_HTTP_URL` | none | Key service URL when the backend is `http`. |
+| `DKIM_API_KEY` | none | Sent as the `X-API-Key` header to the key service. |
+| `REDIS_HOST` | `127.0.0.1` | Redis host when the backend is `redis`. |
+| `REDIS_PORT` | `6379` | Redis port. |
+| `WEBHOOK_URL` | unset | Delivery events are posted here as JSON. Leave unset to turn webhooks off. |
+| `WEBHOOK_SECRET` | `2025` | Read by the policy, but not sent with webhook requests yet. |
+
+See [KumoMTA configuration](/docs/outbound/configuration).
