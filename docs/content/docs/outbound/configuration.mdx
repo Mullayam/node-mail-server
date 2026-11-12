@@ -1,0 +1,104 @@
+---
+title: KumoMTA configuration
+description: Listener, users, domains, DKIM key sources, sending IPs, queue rates, spool and webhooks.
+---
+
+Settings come from `outbound/.env` (see [Environment variables](/docs/reference/environment-variables#kumomta-outboundenv)) and from the files in `outbound/policy/`.
+
+## SMTP listener
+
+`init.lua` starts one SMTP listener:
+
+| Setting | Value |
+|---------|-------|
+| Address | `0.0.0.0:587` |
+| Hostname | `KUMOMTA_HOSTNAME` (default `mail.enjoys.in`) |
+| Relay hosts | `127.0.0.1`, `::1`, `10.0.0.0/8`, `172.16.0.0/12` (Docker) and `192.168.0.0/16` |
+
+An HTTP listener for metrics and the API runs on `127.0.0.1:8000`.
+
+<Callout title="AUTH only works after STARTTLS">
+  KumoMTA accepts SMTP AUTH only on a TLS-protected connection. Clients must use STARTTLS on port 587. Until you set `tls_certificate` and `tls_private_key` on the listener, KumoMTA uses a self-signed certificate, which strict clients will reject.
+</Callout>
+
+## Users
+
+`outbound/policy/users.lua` maps a username to a password. It is read on every login, so you can edit it without restarting.
+
+```lua
+return {
+  ["user1"] = "change-me",
+}
+```
+
+Passwords are stored in plain text. For production, keep them in a secrets store or compare hashes.
+
+Messages are only accepted from clients that logged in: `smtp_server_rcpt_to` rejects every recipient with `550 5.7.1 Authentication required` for an unauthenticated session.
+
+## Sender and recipient domains
+
+Two files list domains, and both currently contain the same two:
+
+| File | Used for |
+|------|----------|
+| `domains.lua` | The sender domains that may send when `USE_RELAY=true`. |
+| `listener_domains.toml` | Domains that accept relayed mail (`relay_to = true`), and the default of logging bounce reports (`log_oob`) and feedback-loop reports (`log_arf`). |
+
+Replace the domains in both with your own.
+
+## DKIM keys
+
+`dkim.lua` is written to take the private key from one of three places, chosen by `DKIM_BACKEND`:
+
+| Backend | Where the key comes from |
+|---------|--------------------------|
+| `file` | `/opt/kumomta/etc/dkim/<domain>/<selector>.key`. Mount your keys there. |
+| `http` | `GET $DKIM_HTTP_URL?domain=<d>&selector=<s>` with the header `X-API-Key: $DKIM_API_KEY`. |
+| `redis` | The key `<domain>::pvt::key` in the Redis server at `REDIS_HOST`. |
+
+The domain is read from the message's `From` header, and the selector is `DKIM_SELECTOR`.
+
+<Callout title="DKIM signing does not work yet" type="error">
+  The signing code uses functions that KumoMTA does not have. See [Known issues](/docs/outbound/known-issues) for the fix.
+</Callout>
+
+## Sending IPs
+
+`egress.lua` builds an egress pool called `main-pool` from `KUMOMTA_SOURCE_IPS`, a comma-separated list. Each IP becomes a source named `source-1`, `source-2` and so on, and announces `KUMOMTA_HOSTNAME` in its EHLO. If the variable is unset, KumoMTA sends from the default route.
+
+When you use several IPs, give every one a PTR record that matches `KUMOMTA_HOSTNAME`.
+
+## Queues and rate limits
+
+`queue.lua` creates a queue for each recipient domain, all using `main-pool`.
+
+| Recipient domain | Message rate |
+|------------------|--------------|
+| `gmail.com`, `googlemail.com` | 200 per minute |
+| `yahoo.com`, `ymail.com` | 100 per minute |
+| `outlook.com`, `hotmail.com`, `live.com`, `msn.com` | 60 per minute |
+| Everything else | 300 per minute |
+
+| Retry setting | Value |
+|---------------|-------|
+| First retry | 1 minute |
+| Longest wait between retries | 4 hours |
+| Give up after | 24 hours |
+
+## Spool and logs
+
+| What | Where |
+|------|-------|
+| Message data | `/var/spool/kumomta/data` |
+| Message metadata | `/var/spool/kumomta/meta` |
+| Logs | `/var/log/kumomta`, in 30 second segments |
+
+The compose file keeps `/var/spool/kumomta` and `/var/log/kumomta` in Docker volumes.
+
+## Webhooks
+
+When `WEBHOOK_URL` is set, `webhook.lua` posts log events to it as JSON. Each event includes these headers from the message: `Subject`, `From`, `To` and `Message-ID`. Leave `WEBHOOK_URL` unset to turn webhooks off.
+
+Record types include `Reception`, `Delivery`, `Bounce`, `TransientFailure`, `Expiration`, `OOB` and `Feedback`. See the [KumoMTA log record reference](https://docs.kumomta.com/reference/log_record/) for the full list.
+
+If your endpoint is down, KumoMTA keeps the events in a queue and retries, starting after 1 minute and backing off to 20 minutes between attempts.
