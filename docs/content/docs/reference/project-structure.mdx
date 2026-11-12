@@ -12,6 +12,10 @@ node-mail-server/
 │   ├── policy/      Lua and TOML, mounted at /opt/kumomta/etc/policy
 │   ├── .env.example
 │   └── README.md
+├── relay/           KumoMTA public relay, one login and webhook per account
+│   ├── policy/      Lua, mounted at /opt/kumomta/etc/policy
+│   ├── .env.example
+│   └── README.md
 ├── deploy/          docker-compose.yml
 ├── scripts/         setup.js, send-mail.js, run.sh
 ├── assets/images/   Screenshots used by the README
@@ -55,8 +59,10 @@ These are in `.gitignore`. Commit only the `.example` versions.
 | `server/.env` | Hostnames, TLS paths, DKIM and PGP keys. |
 | `outbound/.env` | KumoMTA settings, DKIM service key, webhook secret. |
 | `outbound/policy/users.lua` | SMTP usernames and passwords. Start from `users.example.lua`. |
+| `relay/.env` | Relay settings and the DKIM service key. |
+| `relay/policy/users.lua` | Relay accounts: passwords, domains and webhook secrets. Start from `users.example.lua`. |
 | `server/records.json` | Generated DNS records, **including the DKIM private key**. |
-| `*.key`, `*.pem`, `outbound/dkim/` | Private keys and certificates. |
+| `*.key`, `*.pem`, `outbound/dkim/`, `relay/dkim/`, `relay/tls/` | Private keys and certificates. |
 
 ## Scripts
 

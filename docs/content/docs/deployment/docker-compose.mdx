@@ -12,8 +12,10 @@ description: Run the mail server, KumoMTA, IMAP and Redis together with one comp
 cp server/.env.example server/.env
 cp outbound/.env.example outbound/.env
 cp outbound/policy/users.example.lua outbound/policy/users.lua
+cp relay/.env.example relay/.env
+cp relay/policy/users.example.lua relay/policy/users.lua
 
-# 2. Start inbound, outbound and Redis
+# 2. Start inbound, outbound, relay and Redis
 docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml ps
 
@@ -27,6 +29,7 @@ docker compose -f deploy/docker-compose.yml --profile imap up -d
 |---------|-------|----------------|------|
 | `inbound` | Built from `server/Dockerfile` | 25 | The Node mail server. Receives mail on port 25. |
 | `outbound` | `ghcr.io/kumocorp/kumomta:latest` | 587 | KumoMTA. Accepts authenticated mail and delivers it. |
+| `relay` | `ghcr.io/kumocorp/kumomta:latest` | 2587 | KumoMTA. Public relay with a login and a webhook per account. See [Relay](/docs/outbound/relay). |
 | `imap` | Built from `server/imap/Dockerfile` | 143 | Gluon IMAP server. Only with `--profile imap`. |
 | `redis` | `redis:7-alpine` | none | Shared by KumoMTA (DKIM keys) and IMAP. Not published. |
 
@@ -38,10 +41,14 @@ The `inbound` image runs `bun src/main.ts`, because Bun resolves the `@/` path a
 |--------|------------|-------|
 | `kumo-spool` | `/var/spool/kumomta` | KumoMTA's queued messages. |
 | `kumo-logs` | `/var/log/kumomta` | KumoMTA's logs. |
+| `relay-spool` | `/var/spool/kumomta` | The relay's queued messages and pending webhook events. |
+| `relay-logs` | `/var/log/kumomta` | The relay's logs. |
 | `imap-data` | `/data` | Gluon's local cache. |
 | `redis-data` | `/data` | Redis data. |
 
 `outbound/policy/` is mounted read-only at `/opt/kumomta/etc/policy`. To use file-based DKIM keys, uncomment the `outbound/dkim` mount in the compose file.
+
+The `relay` service mounts `relay/policy/` the same way, and has its own commented-out mounts for `relay/dkim` and `relay/tls`.
 
 ## Who owns port 587
 

@@ -12,8 +12,10 @@ The root `.gitignore` excludes these files. Commit only the `.example` versions.
 | `server/.env` | Hostnames, TLS paths, DKIM and PGP keys. |
 | `outbound/.env` | KumoMTA settings and keys for the DKIM and webhook services. |
 | `outbound/policy/users.lua` | SMTP usernames and passwords, in plain text. |
+| `relay/.env` | Relay settings and the key for the DKIM service. |
+| `relay/policy/users.lua` | Relay passwords and webhook secrets, in plain text. |
 | `server/records.json` | Generated DNS records and the DKIM private key. |
-| `*.key`, `*.pem`, `outbound/dkim/` | Private keys and certificates. |
+| `*.key`, `*.pem`, `outbound/dkim/`, `relay/dkim/`, `relay/tls/` | Private keys and certificates. |
 | `server/spool/` | Queued mail. |
 
 If a secret was ever committed, treat it as exposed: rotate it, not just delete the file.
@@ -24,6 +26,7 @@ If a secret was ever committed, treat it as exposed: rotate it, not just delete 
 |------|-----------------------|
 | 25 | Yes, to receive mail. |
 | 587 | Yes, if clients outside your network send through the server. |
+| 2587 | Yes, if you run the [relay](/docs/outbound/relay). Every message needs a login. Use a real TLS certificate. |
 | 143 | Only if you run IMAP. Prefer TLS (993). |
 | 8000 | **No.** KumoMTA's HTTP API can inject mail. It listens on `127.0.0.1` inside the container, and the compose file does not publish it. |
 | 8008 | **No.** The KumoMTA traffic-shaping daemon, if you run it. |

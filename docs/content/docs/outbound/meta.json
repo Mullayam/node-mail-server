@@ -4,6 +4,7 @@
   "pages": [
     "overview",
     "configuration",
+    "relay",
     "known-issues"
   ]
 }

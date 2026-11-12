@@ -1,0 +1,216 @@
+---
+title: Relay
+description: A public SMTP relay for your apps, with a login per account and a webhook per account that reports every event.
+---
+
+The `relay/` folder runs a second KumoMTA instance: an SMTP relay that your apps and servers send through. It is built for the internet:
+
+- Every message needs a username and password. There is no IP-based trust.
+- Each account can only send for its own domains.
+- Every event for an account's mail goes to that account's webhook, and to no other.
+
+```text
+app ──2587 STARTTLS + AUTH──▶ KumoMTA ──DKIM──▶ queue ──▶ recipient's MX (or a smarthost)
+                                 │
+                                 └──▶ the account's webhook (signed JSON, one POST per event)
+```
+
+It is separate from the [`outbound`](/docs/outbound/overview) service, with its own port, spool and logs.
+
+## Files
+
+Everything KumoMTA reads is in `relay/policy/`, mounted read-only at `/opt/kumomta/etc/policy`.
+
+| File | What it does |
+|------|--------------|
+| `init.lua` | Entry point. Starts the 2587 listener and checks the login, the sender and the `From` header. |
+| `accounts.lua` | Loads `users.lua` and checks passwords and domains. |
+| `webhook.lua` | Sends each event to the webhook of the account that sent the mail. |
+| `trace.lua` | Reads the `X-Trace-Id` and `X-Campaign` headers, removes them, and picks the fields that are logged. |
+| `dkim.lua` | DKIM signing. Keys come from a file, an HTTP service or Redis. |
+| `egress.lua` | Sending IPs, per-provider rate limits and smarthost settings. |
+| `queue.lua` | Retry schedule and smarthost routing. |
+| `users.lua` | Accounts. Not committed. Start from `users.example.lua`. |
+
+## Run it
+
+From the repository root:
+
+```bash
+cp relay/.env.example relay/.env
+cp relay/policy/users.example.lua relay/policy/users.lua
+# edit both files, then:
+docker compose -f deploy/docker-compose.yml up -d relay
+docker compose -f deploy/docker-compose.yml logs -f relay
+```
+
+Queued mail and pending webhook events are kept in the `relay-spool` volume, so they survive a rebuild.
+
+<Callout title="Use a real certificate" type="warn">
+  KumoMTA only accepts a login after STARTTLS. Without `RELAY_TLS_CERT` and `RELAY_TLS_KEY` it uses a self-signed certificate, and clients must turn off certificate checks. For a public relay, mount your certificate (uncomment the `relay/tls` mount in the compose file) and set both variables.
+</Callout>
+
+## Accounts
+
+`relay/policy/users.lua` holds one entry per account:
+
+```lua
+return {
+  ["app1"] = {
+    password = "change-me",
+    domains = { "example.com" },
+    webhook = {
+      url = "https://app1.example.com/webhooks/mail",
+      secret = "change-me",
+      events = { "Reception", "Delivery", "TransientFailure", "Bounce", "Expiration" },
+    },
+  },
+}
+```
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `password` | Yes | The SMTP password. Stored in plain text. |
+| `domains` | Yes | Domains the account may send for. A domain also allows its subdomains, so `example.com` allows `news.example.com`. |
+| `webhook.url` | With `webhook` | Where this account's events are posted. |
+| `webhook.secret` | With `webhook` | Signs each request. |
+| `webhook.events` | No | Only send these event types. Leave it out to get all of them. |
+
+If an account has a `webhook` without a `url` or a `secret`, the account is turned off and its logins fail. The reason is written to the relay's log. Changes to `users.lua` apply within a minute, without a restart.
+
+## Send mail
+
+| Setting | Value |
+|---------|-------|
+| Host and port | Your relay host, port `2587` |
+| Security | STARTTLS |
+| Login | An account name and password from `users.lua` |
+
+Both the envelope sender (`MAIL FROM`) and the `From` header must be in the account's domains. The relay DKIM-signs the message for the `From` domain.
+
+```js
+const transport = nodemailer.createTransport({
+  host: "relay.example.com",
+  port: 2587,
+  requireTLS: true,
+  auth: { user: "app1", pass: "change-me" },
+});
+
+await transport.sendMail({
+  from: "hello@example.com",
+  to: "someone@gmail.com",
+  subject: "Hi",
+  text: "Hello",
+  headers: { "X-Trace-Id": "order-1234", "X-Campaign": "welcome" },
+});
+```
+
+Two optional headers help you match events to your own records. The relay removes both before it delivers the message.
+
+| Header | Shows up in events as | When missing |
+|--------|-----------------------|--------------|
+| `X-Trace-Id` | `meta.x_trace_id` | The relay's message ID |
+| `X-Campaign` | `meta.campaign`, and in the queue name | Not set |
+
+The `250` reply ends with the relay's message ID for each recipient (`OK ids=<id> ...`). It is the same value as `id` in the events.
+
+### Rejections
+
+| Reply | Cause |
+|-------|-------|
+| `530 5.7.0 Authentication required` | The client did not log in. |
+| `535 5.7.8` | Wrong name or password, or the account is turned off. |
+| `550 5.7.1 Sender domain is not allowed for this account` | The `MAIL FROM` domain is not in the account's `domains`. |
+| `550 5.7.1 From must be a single address in a domain allowed for this account` | The `From` header is not one address in the account's `domains`. |
+
+Rejections after a successful login are also sent to the account's webhook as `Rejection` events.
+
+## Webhook
+
+The relay sends one `POST` per event. The body is a KumoMTA [log record](https://docs.kumomta.com/reference/log_record/):
+
+```json
+{
+  "type": "Bounce",
+  "id": "65f291aedeea11f194609a64d9b217fd",
+  "sender": "hello@example.com",
+  "recipient": "someone@example.net",
+  "queue": "welcome:app1@example.net",
+  "response": { "code": 556, "content": "...", "enhanced_code": { "class": 5, "subject": 1, "detail": 10 } },
+  "timestamp": 1794523393,
+  "num_attempts": 1,
+  "meta": {
+    "authn_id": "app1",
+    "x_trace_id": "order-1234",
+    "campaign": "welcome",
+    "received_from": "198.51.100.7:49652"
+  },
+  "headers": { "Message-ID": "<...>", "Subject": "Hi", "From": "hello@example.com", "To": "someone@example.net" }
+}
+```
+
+`type` is one of `Reception`, `Delivery`, `TransientFailure`, `Bounce`, `Expiration`, `Rejection`, `AdminBounce` or `Delayed`, plus a few rarer types described in the log record reference.
+
+Each request has these headers:
+
+| Header | Value |
+|--------|-------|
+| `X-Relay-Event-Id` | Unique for each event, and the same on every retry. Use it to drop duplicates. |
+| `X-Relay-Timestamp` | Unix time in seconds when this attempt was signed. |
+| `X-Relay-Signature` | `sha256=` and the hex HMAC-SHA256 of `<timestamp>.<raw body>`, keyed with the account's `secret`. |
+
+### Your response
+
+| Response | What the relay does |
+|----------|---------------------|
+| `2xx` or `409` | Marks the event as delivered. |
+| `400`, `410`, `413`, `415` or `422` | Drops the event. It is not retried. |
+| Anything else, a timeout or a connection error | Retries after 30 seconds, backing off to every 10 minutes, until `WEBHOOK_MAX_AGE` (3 days by default). |
+
+Pending events are stored in the spool, so a restart does not lose them.
+
+### Check the signature
+
+Verify the signature against the raw body before you parse it:
+
+```js
+const crypto = require("crypto");
+
+function verifyRelayWebhook(rawBody, headers, secret) {
+  const timestamp = headers["x-relay-timestamp"];
+  const expected =
+    "sha256=" +
+    crypto.createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("hex");
+  const given = Buffer.from(headers["x-relay-signature"] || "");
+  const fresh = Math.abs(Date.now() / 1000 - Number(timestamp)) < 300;
+  return fresh && given.length === expected.length && crypto.timingSafeEqual(given, Buffer.from(expected));
+}
+```
+
+The timestamp check rejects old requests that someone replays.
+
+## Delivery
+
+By default the relay delivers to each recipient's mail server, with the per-provider rate limits that ship with KumoMTA. To change them, add `relay/policy/shaping.toml`.
+
+To send everything through another server instead, set `RELAY_SMARTHOST`, plus `RELAY_SMARTHOST_PORT`, `RELAY_SMARTHOST_USER` and `RELAY_SMARTHOST_PASS` if it needs a login. To go through this stack's `outbound` service:
+
+```bash
+RELAY_SMARTHOST=outbound
+RELAY_SMARTHOST_PORT=587
+RELAY_SMARTHOST_USER=user1
+RELAY_SMARTHOST_PASS=change-me
+RELAY_SMARTHOST_TLS=RequiredInsecure
+```
+
+`RequiredInsecure` is needed because `outbound` uses a self-signed certificate. Set `DKIM_BACKEND=none` if the smarthost signs the mail.
+
+All settings are listed in [Environment variables](/docs/reference/environment-variables#kumomta-relay-relayenv).
+
+## Limits
+
+- Passwords in `users.lua` are stored in plain text.
+- There are no per-account rate limits yet.
+- A connection that fails before it logs in has no account, so it only appears in the relay's own logs (the `relay-logs` volume).
+- If you remove an account or its webhook, the account's pending events are dropped.
+- A bounce that a remote server sends later, after accepting the mail, goes to the envelope sender's domain, not to the relay.

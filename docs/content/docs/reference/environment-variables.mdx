@@ -9,8 +9,9 @@ Settings are read from `.env` files. Copy the example file and edit it:
 |-----------|------|----|
 | Node mail server | `server/.env.example` | `server/.env` |
 | KumoMTA | `outbound/.env.example` | `outbound/.env` |
+| KumoMTA relay | `relay/.env.example` | `relay/.env` |
 
-Both `.env` files are in `.gitignore`. `server/.env.example` is always the most current list.
+All `.env` files are in `.gitignore`. `server/.env.example` is always the most current list.
 
 ## Node mail server (`server/.env`)
 
@@ -99,3 +100,32 @@ ARC sealing is on only when both the key path and the signing domain are set.
 | `WEBHOOK_SECRET` | `2025` | Read by the policy, but not sent with webhook requests yet. |
 
 See [KumoMTA configuration](/docs/outbound/configuration).
+
+## KumoMTA relay (`relay/.env`)
+
+Accounts, their domains and their webhooks are not set here. They live in `relay/policy/users.lua`. See [Relay](/docs/outbound/relay#accounts).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KUMOMTA_HOSTNAME` | `relay.example.com` | Hostname for the SMTP banner and EHLO. It must match the sending IP's PTR record. |
+| `KUMOMTA_SOURCE_IPS` | unset | Comma-separated outbound IPs. Leave unset to use the default route. |
+| `RELAY_LISTEN` | `0.0.0.0:2587` | Listener address inside the container. |
+| `RELAY_TLS_CERT` | unset | Certificate for STARTTLS. Without it, KumoMTA uses a self-signed one. |
+| `RELAY_TLS_KEY` | unset | Private key for `RELAY_TLS_CERT`. |
+| `RELAY_SMARTHOST` | unset | Send everything to this host instead of each recipient's MX. |
+| `RELAY_SMARTHOST_PORT` | `587` | Smarthost port. |
+| `RELAY_SMARTHOST_USER` | unset | Smarthost login. Leave unset for no login. |
+| `RELAY_SMARTHOST_PASS` | empty | Smarthost password. |
+| `RELAY_SMARTHOST_TLS` | `Required` | `Required`, `RequiredInsecure`, `Opportunistic`, `OpportunisticInsecure` or `Disabled`. |
+| `RELAY_SMARTHOST_CONNECTIONS` | `10` | Maximum connections to the smarthost. |
+| `RELAY_RETRY_INTERVAL` | `1m` | First retry delay for mail. |
+| `RELAY_MAX_RETRY_INTERVAL` | `4h` | Longest delay between retries. |
+| `RELAY_MAX_AGE` | `24h` | How long mail is retried before it bounces. |
+| `DKIM_BACKEND` | `file` | Where DKIM keys come from: `file`, `http`, `redis` or `none`. |
+| `DKIM_SELECTOR` | `default` | DKIM selector. |
+| `DKIM_HTTP_URL` | none | Key service URL when the backend is `http`. |
+| `DKIM_API_KEY` | none | Sent as the `X-API-Key` header to the key service. |
+| `REDIS_HOST` | `127.0.0.1` | Redis host when the backend is `redis`. |
+| `REDIS_PORT` | `6379` | Redis port. |
+| `WEBHOOK_MAX_AGE` | `3d` | How long an event keeps being retried before it is dropped. |
+| `WEBHOOK_TIMEOUT` | `10s` | Timeout for each webhook request. |
