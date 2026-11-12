@@ -26,23 +26,15 @@ local function get_dkim_private_key(domain, selector)
   if dkim_backend == "http" then
     local base_url = os.getenv("DKIM_HTTP_URL")
     if not base_url then return nil end
-    local response = kumo.http_request {
-    url = string.format(
-        "%s?domain=%s&selector=%s",
-        base_url,
-        domain,
-        selector
-    ),
-    method = "GET",
-    timeout = "5s",
-    headers = {        
-        ["X-API-Key"] = os.getenv("DKIM_API_KEY"),
-        ["Accept"] = "text/plain",
-    },
-    }
+    local response = kumo.http.build_client({})
+      :get(string.format("%s?domain=%s&selector=%s", base_url, domain, selector))
+      :header("X-API-Key", os.getenv("DKIM_API_KEY") or "")
+      :header("Accept", "text/plain")
+      :timeout("5s")
+      :send()
 
-    if response and response.status == 200 then
-      return response.body
+    if response:status_code() == 200 then
+      return response:text()
     end
 
     return nil
@@ -50,13 +42,16 @@ local function get_dkim_private_key(domain, selector)
 
   -- ================= REDIS BACKEND =================
   if dkim_backend == "redis" then
-    local redis = kumo.redis_connect {
-      host = os.getenv("REDIS_HOST") or "127.0.0.1",
-      port = tonumber(os.getenv("REDIS_PORT")) or 6379,
+    local redis = require("redis").open {
+      node = string.format(
+        "redis://%s:%s/",
+        os.getenv("REDIS_HOST") or "127.0.0.1",
+        os.getenv("REDIS_PORT") or "6379"
+      ),
     }
 
     local key_name = string.format("%s::pvt::key", domain)
-    local key = redis:get(key_name)
+    local key = redis:query("get", key_name)
 
     return key
   end
@@ -64,45 +59,52 @@ local function get_dkim_private_key(domain, selector)
   return nil
 end
 
+local cached_dkim_private_key = kumo.memoize(get_dkim_private_key, {
+  name = "outbound_dkim_keys",
+  ttl = "5 minutes",
+  capacity = 1024,
+})
+
 -- ================================================================
 -- DKIM sign a message — auto-detects domain from From header
 -- ================================================================
 local function sign_with_dkim(msg)
 
-  local from = msg:from_header()
-  local domain = from and from:match('@([%w%.%-]+)%s*>?%s*$')
+  local parsed, domain = pcall(function()
+    return msg:from_header().domain:lower()
+  end)
 
-  if not domain then
-    kumo.log("warn", "DKIM: could not parse domain")
+  if not parsed or not domain:match("^[%w%-]+[%w%.%-]*$") or domain:find("..", 1, true) then
+    kumo.log_warn("DKIM: could not parse domain")
     return
   end
 
-  local private_key = get_dkim_private_key(domain, dkim_selector)
+  local fetched, private_key = pcall(cached_dkim_private_key, domain, dkim_selector)
 
-  if not private_key then
-    kumo.log("warn", "DKIM: key not found for " .. domain)
+  if not fetched or type(private_key) ~= "string" or private_key == "" then
+    kumo.log_warn("DKIM: key not found for " .. domain)
     return
   end
 
   local ok, err = pcall(function()
-    msg:dkim_sign {
+    msg:dkim_sign(kumo.dkim.rsa_sha256_signer {
       domain   = domain,
       selector = dkim_selector,
       headers  = {
-        "From", "Reply-To", "Subject", "Date", "To", "Cc",
+        "From", "Reply-To", "Subject", "Date", "To", "Cc", "Message-ID",
         "Resent-Date", "Resent-From", "Resent-To", "Resent-Cc",
         "In-Reply-To", "References", "List-Id", "List-Help",
         "List-Unsubscribe", "List-Subscribe", "List-Post",
         "List-Owner", "List-Archive"
       },
-      key = private_key,
-    }
+      key = { key_data = private_key },
+    })
   end)
 
   if ok then
-    kumo.log("info", "DKIM signed via " .. dkim_backend .. " backend for " .. domain)
+    kumo.log_info("DKIM signed via " .. dkim_backend .. " backend for " .. domain)
   else
-    kumo.log("error", "DKIM sign failed: " .. tostring(err))
+    kumo.log_error("DKIM sign failed: " .. tostring(err))
   end
 end
 

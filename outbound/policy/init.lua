@@ -79,7 +79,7 @@ kumo.on('smtp_server_auth_plain', function(authzid, authcid, password, conn)
   return false
 end)
 
-kumo.on('smtp_server_mail_from', function(sender, msg, conn)
+kumo.on('smtp_server_mail_from', function(sender, conn)
 
   if use_relay == "false" then
     return 
@@ -93,7 +93,7 @@ kumo.on('smtp_server_mail_from', function(sender, msg, conn)
   end
 
   -- Extract domain
-  local domain = string.match(sender, "@(.+)$")
+  local domain = (sender.domain or ""):lower()
 
   if not allowed_domains[domain] then
     return kumo.reject(550, "5.7.1 Sender domain not allowed")
