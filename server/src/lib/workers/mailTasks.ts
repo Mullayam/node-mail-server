@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { readFile } from "fs/promises";
 import nodemailer from "nodemailer";
+import MailComposer from "nodemailer/lib/mail-composer";
 import { env } from "../../config/env";
 import {
 	loadOpenPgp,
@@ -43,6 +44,28 @@ export interface PgpEncryptTask {
 	publicKey: string;
 	privateKey: string;
 	passphrase: string;
+}
+
+export interface ComposeAttachment {
+	filename: string;
+	content: string;
+	contentType?: string;
+	cid?: string;
+}
+
+export interface ComposeMimeTask {
+	from: string;
+	to: string[];
+	cc: string[];
+	bcc: string[];
+	replyTo?: string[];
+	subject?: string;
+	text?: string;
+	html?: string;
+	headers: Record<string, string>;
+	inReplyTo?: string;
+	references?: string;
+	attachments: ComposeAttachment[];
 }
 
 export interface ParseDsnTask {
@@ -144,6 +167,33 @@ async function dkimSign(task: DkimSignTask): Promise<Uint8Array> {
 	} finally {
 		transporter.close();
 	}
+}
+
+function composeMime(task: ComposeMimeTask): Promise<Uint8Array> {
+	const mail = new MailComposer({
+		from: task.from,
+		to: task.to,
+		cc: task.cc,
+		bcc: task.bcc,
+		replyTo: task.replyTo,
+		subject: task.subject,
+		text: task.text,
+		html: task.html,
+		headers: task.headers,
+		inReplyTo: task.inReplyTo,
+		references: task.references,
+		attachments: task.attachments.map((attachment) => ({
+			filename: attachment.filename,
+			content: Buffer.from(attachment.content, "base64"),
+			contentType: attachment.contentType,
+			cid: attachment.cid,
+		})),
+	});
+	return new Promise((resolve, reject) => {
+		mail
+			.compile()
+			.build((error, message) => (error ? reject(error) : resolve(message)));
+	});
 }
 
 const PGP_KEY_CACHE_SIZE = 8;
@@ -360,6 +410,7 @@ function headerBlock(text: string, maxBytes: number): string {
 
 export const MAIL_TASKS = {
 	authenticate,
+	composeMime,
 	dkimSign,
 	pgpEncrypt,
 	parseDsn,

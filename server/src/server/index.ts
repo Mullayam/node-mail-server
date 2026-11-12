@@ -1,3 +1,4 @@
+import type { Server } from "http";
 import type { SMTPServer } from "smtp-server";
 import { MAIL_LIMITS } from "../config/constants";
 import { env } from "../config/env";
@@ -5,7 +6,9 @@ import { mailConfig } from "../config/mailConfig";
 import { smtpMessages } from "../config/smtpMessages";
 import { Logging } from "../lib/logs";
 import { closeMailWorkers } from "../lib/workers";
-import { BounceServer } from "./BounceServer";
+import { ApiServerConfig } from "./ApiServer";
+import { BounceServerConfig } from "./BounceServer";
+import { BounceWebhookServerConfig } from "./BounceWebhookServer";
 import { IncomingServerConfig } from "./IncomingServer";
 import { closeMailRuntime, getMailRuntime } from "./mta/runtime";
 import { OutgoingServerConfig } from "./OutgoingServer";
@@ -25,17 +28,23 @@ import { OutgoingServerConfig } from "./OutgoingServer";
 export class SMTP_SERVICE {
 	private static _instance: Promise<SMTP_SERVICE> | null = null;
 	private readonly servers: SMTPServer[] = [];
-	private readonly bounceServer: BounceServer;
+	private readonly httpServers: Server[] = [];
 	private shuttingDown?: Promise<void>;
 
 	private constructor() {
-		const runtime = getMailRuntime();
+		getMailRuntime();
 		const incomingServer = new IncomingServerConfig(env.server.incomingHost);
 		const outgoingServer = new OutgoingServerConfig(env.server.outgoingHost);
+		const bounceServer = new BounceServerConfig(env.server.outgoingHost);
+		const bounceWebhookServer = new BounceWebhookServerConfig();
+		const apiServer = new ApiServerConfig();
 
 		this.servers.push(incomingServer.start(), outgoingServer.start());
-		this.bounceServer = new BounceServer(runtime.bounces);
-		this.bounceServer.start();
+		const bounce = bounceServer.start();
+		if (bounce) this.servers.push(bounce);
+		for (const server of [bounceWebhookServer.start(), apiServer.start()]) {
+			if (server) this.httpServers.push(server);
+		}
 		this.registerProcessHandlers();
 	}
 
@@ -52,13 +61,12 @@ export class SMTP_SERVICE {
 	shutdown(): Promise<void> {
 		this.shuttingDown ??= Promise.race([
 			(async () => {
-				await Promise.allSettled([
-					...this.servers.map(
+				await Promise.allSettled(
+					[...this.servers, ...this.httpServers].map(
 						(server) =>
 							new Promise<void>((resolve) => server.close(() => resolve())),
 					),
-					this.bounceServer.close(),
-				]);
+				);
 				await closeMailRuntime();
 				await closeMailWorkers();
 				mailConfig.close();

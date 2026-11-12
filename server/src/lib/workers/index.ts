@@ -4,6 +4,7 @@ import { env } from "../../config/env";
 import { Logging } from "../logs";
 import {
 	type AuthenticateTask,
+	type ComposeMimeTask,
 	type DkimSignTask,
 	MAIL_TASKS,
 	type MailTaskName,
@@ -66,6 +67,8 @@ const toBuffer = (data: Uint8Array): Buffer =>
 
 export const mailWorkers = {
 	authenticate: (task: AuthenticateTask) => runMailTask("authenticate", task),
+	composeMime: async (task: ComposeMimeTask) =>
+		toBuffer(await runMailTask("composeMime", task)),
 	dkimSign: async (task: DkimSignTask) =>
 		toBuffer(await runMailTask("dkimSign", task)),
 	pgpEncrypt: (task: PgpEncryptTask) => runMailTask("pgpEncrypt", task),
