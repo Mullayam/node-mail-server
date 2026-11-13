@@ -12,6 +12,7 @@ import (
 
 	"imap/core/connector"
 	"imap/core/consts"
+	"imap/internal/dedupe"
 	"imap/internal/directorykind"
 	"imap/internal/filing"
 	"imap/internal/quota"
@@ -20,20 +21,27 @@ import (
 
 type ConnectorFactory struct {
 	server         *gluon.Server
-	dir            directorykind.Directory // the users (SMTP users + IMAP flag)
-	engine         storage.Engine          // where the mail lives
+	dir            directorykind.Directory
+	engine         storage.Engine
 	quota          *quota.Manager
-	ids            *idStore                            // email -> Gluon user ID, kept across restarts
-	userConnectors map[string]string                   // email -> gluonUserID, users loaded right now
-	connectors     map[string]*connector.MyDBConnector // email -> its connector, for Deliver
-	rules          func() filing.Rules                 // where Deliver files spam
+	ids            *idStore
+	userConnectors map[string]string // email -> gluonUserID
+	connectors     map[string]*connector.MyDBConnector
+	rules          func() filing.Rules
+	seen           *dedupe.Store
 	mu             sync.Mutex
 }
+
+const dedupeTTL = 24 * time.Hour
 
 func NewConnectorFactory(server *gluon.Server, dir directorykind.Directory, engine storage.Engine, q *quota.Manager, dataDir string) (*ConnectorFactory, error) {
 	ids, err := openIDStore(filepath.Join(dataDir, "gluon-users.json"))
 	if err != nil {
 		return nil, err
+	}
+	seen, err := dedupe.Open(filepath.Join(dataDir, "dedupe.db"), dedupeTTL)
+	if err != nil {
+		return nil, fmt.Errorf("open the delivered-message record: %w", err)
 	}
 	cf := &ConnectorFactory{
 		server:         server,
@@ -43,13 +51,24 @@ func NewConnectorFactory(server *gluon.Server, dir directorykind.Directory, engi
 		ids:            ids,
 		userConnectors: make(map[string]string),
 		connectors:     make(map[string]*connector.MyDBConnector),
+		seen:           seen,
 	}
 
 	return cf, nil
 }
 
+func (cf *ConnectorFactory) Close() error {
+	return cf.seen.Close()
+}
+
+func (cf *ConnectorFactory) forget(ctx context.Context, account string, messageIDs []string) {
+	if err := cf.seen.Forget(ctx, account, messageIDs...); err != nil {
+		log.Printf("delivery: could not forget deleted messages of %s: %v", account, err)
+	}
+}
+
 func (cf *ConnectorFactory) InitializeUsers(ctx context.Context) error {
-	// Load users from the directory who have IMAP enabled
+	// Load users from the database who have IMAP enabled
 	// and initialize their connectors in Gluon otherwise user not able to login,
 	report, err := cf.SyncUsers(ctx)
 	if err != nil {
@@ -62,13 +81,13 @@ func (cf *ConnectorFactory) InitializeUsers(ctx context.Context) error {
 	return nil
 }
 
-// GetOrCreateUser registers one user with Gluon. The caller holds cf.mu.
 func (cf *ConnectorFactory) GetOrCreateUser(ctx context.Context, email string, gluon_id *string) (string, error) {
 	var gluonUserID string
-	fresh := true // Gluon has no data for this user yet
+	fresh := true
 
 	userConnector := connector.NewConnector(email, cf.dir, cf.engine, cf.quota)
-	// If gluonID is provided, use it; otherwise, add a new Gluon user
+	userConnector.SetDeleted(cf.forget)
+	// If gluonID is provided, use it; otherwise, try loading from DB
 	if gluon_id == nil {
 		id, err := cf.server.AddUser(ctx, userConnector, consts.DefaultImapPass)
 		if err != nil {
@@ -92,8 +111,6 @@ func (cf *ConnectorFactory) GetOrCreateUser(ctx context.Context, email string, g
 	cf.userConnectors[email] = gluonUserID
 	cf.connectors[email] = userConnector
 
-	// Sync waits for Gluon to apply each update; do not let a stuck Gluon
-	// hang start-up or a reload.
 	syncCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	if err := userConnector.Sync(syncCtx, fresh); err != nil {

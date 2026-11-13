@@ -149,6 +149,7 @@ func main() {
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to create connector factory")
 	}
+	defer instance.Close()
 
 	instance.SetFilingRules(func() filing.Rules { return holder.Current().Delivery })
 	err = instance.InitializeUsers(ctx)

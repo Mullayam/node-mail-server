@@ -8,38 +8,25 @@ import (
 	"strings"
 	"time"
 
+	"imap/internal/dedupe"
 	"imap/internal/directorykind"
 	"imap/internal/filing"
 )
 
-// ErrNotIMAPUser is returned by Deliver for an account that is not loaded in
-// Gluon: it does not exist, or IMAP is not enabled for it.
 var ErrNotIMAPUser = errors.New("not an IMAP user: unknown, or IMAP is not enabled")
 
-// SetFilingRules tells Deliver where to put spam. fn is called for every
-// message, so a reload of imap.xml applies at once.
 func (cf *ConnectorFactory) SetFilingRules(fn func() filing.Rules) {
 	cf.mu.Lock()
 	defer cf.mu.Unlock()
 	cf.rules = fn
 }
 
-// Accepts reports whether address has a mailbox: the user exists and IMAP is
-// enabled, so the user is loaded in Gluon. The LMTP listener asks this for
-// every RCPT TO.
 func (cf *ConnectorFactory) Accepts(address string) bool {
 	cf.mu.Lock()
 	defer cf.mu.Unlock()
 	return cf.connectors[directorykind.Normalize(address)] != nil
 }
 
-// Deliver puts a message into a user's mailbox from outside an IMAP session
-// (SMTP delivery over LMTP, or the router's mail.deliver command). The message
-// is stored, then announced to Gluon through the user's update stream, so
-// connected clients see it straight away.
-//
-// An empty mailbox means "file it": INBOX, or the spam mailbox (created on
-// first use) when a spam header such as X-AE-Spam-Flag says YES.
 func (cf *ConnectorFactory) Deliver(ctx context.Context, address, mailbox string, literal []byte) (string, error) {
 	cf.mu.Lock()
 	conn := cf.connectors[directorykind.Normalize(address)]
@@ -47,6 +34,16 @@ func (cf *ConnectorFactory) Deliver(ctx context.Context, address, mailbox string
 	cf.mu.Unlock()
 	if conn == nil {
 		return "", ErrNotIMAPUser
+	}
+
+	account := directorykind.Normalize(address)
+	messageID := dedupe.MessageID(literal)
+	id, dup, err := cf.seen.Seen(ctx, account, messageID)
+	if err != nil {
+		log.Printf("delivery: duplicate check failed for %s, storing the message anyway: %v", account, err)
+	} else if dup {
+		log.Printf("delivery: %s already has %s, not storing it again", account, messageID)
+		return id, nil
 	}
 
 	if mailbox == "" {
@@ -66,5 +63,12 @@ func (cf *ConnectorFactory) Deliver(ctx context.Context, address, mailbox string
 			log.Printf("delivery: %s -> %s (%s)", directorykind.Normalize(address), mailbox, d.Reason)
 		}
 	}
-	return conn.Deliver(ctx, mailbox, literal, nil, time.Now())
+	id, err = conn.Deliver(ctx, mailbox, literal, nil, time.Now())
+	if err != nil {
+		return id, err
+	}
+	if rerr := cf.seen.Remember(ctx, account, messageID, id); rerr != nil {
+		log.Printf("delivery: could not record %s for %s: %v", messageID, account, rerr)
+	}
+	return id, nil
 }
