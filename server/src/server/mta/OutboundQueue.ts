@@ -30,6 +30,8 @@ export interface QueuedJob {
 	createdAt: number;
 	nextAttemptAt: number;
 	lastError?: string;
+	outboxOwner?: string;
+	delivered?: number;
 }
 
 export interface EnqueueInput {
@@ -39,6 +41,13 @@ export interface EnqueueInput {
 	recipients: string[];
 	raw: Buffer;
 	dsn?: DsnOptions;
+	outboxOwner?: string;
+}
+
+export interface QueueSettledEvent {
+	job: QueuedJob;
+	raw: Buffer;
+	delivered: number;
 }
 
 export interface QueueFailureEvent {
@@ -107,6 +116,7 @@ export class OutboundQueue extends EventEmitter {
 			attempts: 0,
 			createdAt: now,
 			nextAttemptAt: now,
+			outboxOwner: input.outboxOwner,
 		};
 		await this.writeAtomic(this.rawPath(job.id), input.raw);
 		await this.saveJob(job);
@@ -240,8 +250,10 @@ export class OutboundQueue extends EventEmitter {
 
 		const deferred: DeliveryResult[] = [];
 		const failed: DeliveryResult[] = [];
+		let succeeded = 0;
 		for (const result of results) {
 			if (result.success) {
+				succeeded++;
 				Logging.dev(
 					`Delivered ${job.id} to ${result.recipient} via ${this.driver.name} (${result.dsn?.remoteMta})`,
 				);
@@ -257,6 +269,7 @@ export class OutboundQueue extends EventEmitter {
 		}
 
 		job.attempts++;
+		job.delivered = (job.delivered ?? 0) + succeeded;
 		const settings = this.options.settings();
 		const expired =
 			deferred.length > 0 && Date.now() - job.createdAt >= settings.maxAgeMs;
@@ -291,7 +304,14 @@ export class OutboundQueue extends EventEmitter {
 			} satisfies QueueFailureEvent);
 		}
 
-		if (!deferred.length || expired) return this.remove(job.id);
+		if (!deferred.length || expired) {
+			this.emit("settled", {
+				job: { ...job },
+				raw,
+				delivered: job.delivered,
+			} satisfies QueueSettledEvent);
+			return this.remove(job.id);
+		}
 
 		job.recipients = deferred.map((r) => r.recipient);
 		job.lastError = deferred[0].error;
