@@ -35,8 +35,9 @@ LMTP answers once per recipient, so each recipient gets its own result. The Node
 
 When the sender retries after a `450`, mailboxes that already have the message skip it, so nobody gets two copies. The IMAP server records each delivered Message-ID per user in a small SQLite file, `dedupe.db`, in the Gluon data directory (`/data/gluon`). The record:
 
+- is unique: the table has one row per user and Message-ID, and SQLite refuses a second one. Delivery claims that row before it stores the message. If the same message arrives twice at the same moment, one copy is stored and the other is turned away with a temporary error (`451`), so its sender retries and then gets the stored copy. A claim left behind by a crash is released after 5 minutes;
 - survives a restart, because it is on the data volume;
-- is deleted when the user deletes the message (expunge, or deleting its folder), so a message deleted on purpose can arrive again;
+- is deleted when the user deletes the message (expunge, or deleting its folder), so a message deleted on purpose can arrive again. Moving or copying a message does not release it;
 - expires after 24 hours otherwise;
 - is never used for a message with no Message-ID header, which is always stored.
 
@@ -46,7 +47,7 @@ The LMTP port is only for the Docker network. It accepts connections only from t
 
 ## Live updates
 
-Delivery does not wait for a client to ask. After the message is stored, the connector puts a "message created" update on its `GetUpdates` stream and waits until Gluon has applied it. Gluon then announces the new message (`* N EXISTS`) to every session of that user that is waiting in IDLE or has the mailbox open. In the Docker test, two open sessions of one user saw a new message about 10 ms after delivery started.
+Delivery does not wait for a client to ask. After the message is stored, the connector puts a "message created" update on its `GetUpdates` stream and waits until Gluon has applied it. Gluon then announces the new message (`* N EXISTS`) to every session of that user that is waiting in IDLE or has the mailbox open. In the Docker tests, two open sessions of one user saw a new message 10 to 40 ms after delivery started.
 
 By default Gluon holds these notices for 500 ms and merges them. This server turns that off, so each message is announced at once:
 
