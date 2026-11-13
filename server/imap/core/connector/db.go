@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"slices"
 	"strings"
 	"sync"
@@ -173,33 +174,14 @@ func specialUse(name []string) imap.FlagSet {
 		return imap.NewFlagSet(imap.AttrSent)
 	case "drafts":
 		return imap.NewFlagSet(imap.AttrDrafts)
-	case "trash", "deleted items":
+	case "trash", "bin", "deleted items":
 		return imap.NewFlagSet(imap.AttrTrash)
 	case "archive":
 		return imap.NewFlagSet(imap.AttrArchive)
+	case "starred", "flagged":
+		return imap.NewFlagSet(imap.AttrFlagged)
 	}
 	return defaultAttrs
-}
-
-func (c *MyDBConnector) EnsureMailbox(ctx context.Context, name string) (storage.Mailbox, error) {
-	mboxes, err := c.engine.ListMailboxes(ctx, c.email)
-	if err != nil {
-		return storage.Mailbox{}, err
-	}
-	for _, m := range mboxes {
-		if len(m.Name) == 1 && strings.EqualFold(m.Name[0], name) {
-			return m, nil
-		}
-	}
-	id, err := c.engine.CreateMailbox(ctx, c.email, []string{name})
-	if err != nil {
-		return storage.Mailbox{}, err
-	}
-	m := storage.Mailbox{ID: id, Name: []string{name}}
-	if err := c.push(ctx, imap.NewMailboxCreated(gluonMailbox(m))); err != nil {
-		return storage.Mailbox{}, fmt.Errorf("announce mailbox %s: %w", name, err)
-	}
-	return m, nil
 }
 
 // Init the connector. The cache pointer provide here should not be used with any of the other methods.
@@ -269,6 +251,9 @@ func (c *MyDBConnector) CreateMessage(ctx context.Context, cache connector.IMAPS
 	if err := c.quota.Check(ctx, c.email, c.quota.Effective(override), int64(len(literal))); err != nil {
 		return imap.Message{}, nil, err
 	}
+	if c.isStarred(string(mboxID)) {
+		flags = flags.Add(imap.FlagFlagged)
+	}
 	id, err := c.engine.CreateMessage(ctx, c.email, string(mboxID), literal, flags.ToSlice(), date)
 	if err != nil {
 		return imap.Message{}, nil, err
@@ -278,7 +263,13 @@ func (c *MyDBConnector) CreateMessage(ctx context.Context, cache connector.IMAPS
 
 // AddMessagesToMailbox adds the given messages to the given mailbox.
 func (c *MyDBConnector) AddMessagesToMailbox(ctx context.Context, cache connector.IMAPStateWrite, messageIDs []imap.MessageID, mboxID imap.MailboxID) error {
-	return c.engine.AddToMailbox(ctx, c.email, ids(messageIDs), string(mboxID))
+	if err := c.engine.AddToMailbox(ctx, c.email, ids(messageIDs), string(mboxID)); err != nil {
+		return err
+	}
+	if c.isStarred(string(mboxID)) {
+		c.setFlagged(ctx, ids(messageIDs), true)
+	}
+	return nil
 }
 
 // RemoveMessagesFromMailbox removes the given messages from the given mailbox.
@@ -287,16 +278,46 @@ func (c *MyDBConnector) RemoveMessagesFromMailbox(ctx context.Context, cache con
 		return err
 	}
 	c.deleted(ctx, ids(messageIDs))
+	if c.isStarred(string(mboxID)) {
+		c.setFlagged(ctx, c.remaining(ctx, ids(messageIDs)), false)
+	}
 	return nil
 }
 
 // MoveMessages removes the given messages from one mailbox and adds them to the another mailbox.
 // Returns true if the original messages should be removed from mboxFromID (e.g: Distinguishing between labels and folders).
 func (c *MyDBConnector) MoveMessages(ctx context.Context, cache connector.IMAPStateWrite, messageIDs []imap.MessageID, mboxFromID, mboxToID imap.MailboxID) (bool, error) {
+	if c.isStarred(string(mboxToID)) {
+		return false, c.AddMessagesToMailbox(ctx, cache, messageIDs, mboxToID)
+	}
 	if err := c.engine.MoveMessages(ctx, c.email, ids(messageIDs), string(mboxFromID), string(mboxToID)); err != nil {
 		return false, err
 	}
+	if c.isStarred(string(mboxFromID)) {
+		c.setFlagged(ctx, ids(messageIDs), false)
+	}
 	return true, nil
+}
+
+func (c *MyDBConnector) setFlagged(ctx context.Context, messageIDs []string, flagged bool) {
+	if len(messageIDs) == 0 {
+		return
+	}
+	if err := c.engine.SetFlag(ctx, c.email, messageIDs, imap.FlagFlagged, flagged); err != nil {
+		log.Printf("folders: flag %v for %s: %v", flagged, c.email, err)
+		return
+	}
+	c.announceFlags(ctx, messageIDs)
+}
+
+func (c *MyDBConnector) remaining(ctx context.Context, candidates []string) []string {
+	var out []string
+	for _, id := range candidates {
+		if gone, err := c.messageGone(ctx, id); err == nil && !gone {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // MarkMessagesSeen sets the seen value of the given messages.
@@ -306,7 +327,11 @@ func (c *MyDBConnector) MarkMessagesSeen(ctx context.Context, cache connector.IM
 
 // MarkMessagesFlagged sets the flagged value of the given messages.
 func (c *MyDBConnector) MarkMessagesFlagged(ctx context.Context, cache connector.IMAPStateWrite, messageIDs []imap.MessageID, flagged bool) error {
-	return c.engine.SetFlag(ctx, c.email, ids(messageIDs), imap.FlagFlagged, flagged)
+	if err := c.engine.SetFlag(ctx, c.email, ids(messageIDs), imap.FlagFlagged, flagged); err != nil {
+		return err
+	}
+	c.syncStarred(ctx, ids(messageIDs), flagged)
+	return nil
 }
 
 // MarkMessagesForwarded sets the forwarded value of the give messages.
