@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"net/textproto"
 	"sort"
 	"strings"
 	"sync"
@@ -24,10 +27,21 @@ type Mailbox struct {
 }
 
 type Message struct {
-	ID    string    `json:"id"`
-	Size  int64     `json:"size"`
-	Flags []string  `json:"flags"`
-	Date  time.Time `json:"date"`
+	ID        string    `json:"id"`
+	Size      int64     `json:"size"`
+	Flags     []string  `json:"flags"`
+	Date      time.Time `json:"date"`
+	MessageID string    `json:"mid,omitempty"`
+}
+
+type MessageIndex interface {
+	FindByMessageID(ctx context.Context, account, messageID string) ([]string, error)
+	Lookup(ctx context.Context, account, messageID string) (Message, []string, error)
+}
+
+func HeaderMessageID(literal []byte) string {
+	hdr, _ := textproto.NewReader(bufio.NewReader(bytes.NewReader(literal))).ReadMIMEHeader()
+	return strings.TrimSpace(hdr.Get("Message-Id"))
 }
 
 type Engine interface {

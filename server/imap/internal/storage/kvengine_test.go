@@ -98,6 +98,74 @@ func TestKVEngineLifecycle(t *testing.T) {
 	}
 }
 
+func TestMessageIDIndex(t *testing.T) {
+	e, err := Open("pebble", map[string]string{"path": t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	ctx, a := context.Background(), "user@example.com"
+	ix, ok := e.(MessageIndex)
+	if !ok {
+		t.Fatal("pebble should index messages by Message-ID")
+	}
+	outbox, _ := e.CreateMailbox(ctx, a, []string{"Outbox"})
+	sent, _ := e.CreateMailbox(ctx, a, []string{"Sent"})
+	withID := []byte("Message-ID: <m1@example.com>\r\nSubject: x\r\n\r\nbody")
+
+	m1, _ := e.CreateMessage(ctx, a, outbox, withID, nil, time.Now())
+	m2, _ := e.CreateMessage(ctx, a, sent, withID, nil, time.Now())
+	e.CreateMessage(ctx, a, outbox, []byte("Subject: no id\r\n\r\nbody"), nil, time.Now())
+
+	ids, err := ix.FindByMessageID(ctx, a, "<m1@example.com>")
+	slices.Sort(ids)
+	want := []string{m1, m2}
+	slices.Sort(want)
+	if err != nil || !slices.Equal(ids, want) {
+		t.Fatalf("FindByMessageID = %v, %v; want %v", ids, err, want)
+	}
+	if ids, _ := ix.FindByMessageID(ctx, "other@example.com", "<m1@example.com>"); len(ids) != 0 {
+		t.Fatalf("another account sees %v", ids)
+	}
+	if ids, _ := ix.FindByMessageID(ctx, a, ""); len(ids) != 0 {
+		t.Fatalf("an empty Message-ID must find nothing, got %v", ids)
+	}
+
+	msg, boxes, err := ix.Lookup(ctx, a, m1)
+	if err != nil || msg.MessageID != "<m1@example.com>" || !slices.Equal(boxes, []string{outbox}) {
+		t.Fatalf("Lookup = %+v %v %v", msg, boxes, err)
+	}
+	if err := e.MoveMessages(ctx, a, []string{m1}, outbox, sent); err != nil {
+		t.Fatal(err)
+	}
+	if _, boxes, _ := ix.Lookup(ctx, a, m1); !slices.Equal(boxes, []string{sent}) {
+		t.Fatalf("after the move, mailboxes = %v", boxes)
+	}
+
+	if err := e.RemoveFromMailbox(ctx, a, []string{m1, m2}, sent); err != nil {
+		t.Fatal(err)
+	}
+	if ids, _ := ix.FindByMessageID(ctx, a, "<m1@example.com>"); len(ids) != 0 {
+		t.Fatalf("deleted messages must leave the index, got %v", ids)
+	}
+	if _, _, err := ix.Lookup(ctx, a, m1); !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("Lookup of a deleted message: %v", err)
+	}
+}
+
+func TestHeaderMessageID(t *testing.T) {
+	cases := map[string]string{
+		"Message-ID: <a@b>\r\n\r\nx":             "<a@b>",
+		"message-id:  <c@d> \r\n\r\nx":           "<c@d>",
+		"Subject: x\r\n\r\nMessage-ID: <body@x>": "",
+	}
+	for in, want := range cases {
+		if got := HeaderMessageID([]byte(in)); got != want {
+			t.Errorf("HeaderMessageID(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestPebbleKeepsDataAcrossRestart(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()

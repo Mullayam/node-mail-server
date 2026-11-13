@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -44,6 +45,14 @@ func kMsgIn(a, msg, mbox string) []byte {
 	return kv.Key("acct", a, "msgin", msg, mbox)
 }
 func kUsage(a string) []byte { return kv.Key("acct", a, "usage") }
+func kMid(a, mid, msg string) []byte {
+	return kv.Key("acct", a, "mid", midKey(mid), msg)
+}
+
+func midKey(mid string) string {
+	sum := sha256.Sum256([]byte(mid))
+	return hex.EncodeToString(sum[:16])
+}
 
 func newID() string {
 	b := make([]byte, 16)
@@ -93,6 +102,40 @@ func (e *KVEngine) GetMessage(_ context.Context, a, messageID string) ([]byte, e
 
 func (e *KVEngine) HasMessage(_ context.Context, a, messageID string) (bool, error) {
 	return kv.Has(e.db, kMessage(a, messageID))
+}
+
+func (e *KVEngine) FindByMessageID(_ context.Context, a, mid string) ([]string, error) {
+	if mid == "" {
+		return nil, nil
+	}
+	keys, err := kv.Keys(e.db, kv.Prefix("acct", a, "mid", midKey(mid)))
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, k := range keys {
+		id := kv.LastPart(k)
+		if m, err := e.message(a, id); err == nil && m.MessageID == mid {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+func (e *KVEngine) Lookup(_ context.Context, a, id string) (Message, []string, error) {
+	m, err := e.message(a, id)
+	if err != nil {
+		return m, nil, err
+	}
+	keys, err := kv.Keys(e.db, kv.Prefix("acct", a, "msgin", id))
+	if err != nil {
+		return m, nil, err
+	}
+	boxes := make([]string, len(keys))
+	for i, k := range keys {
+		boxes[i] = kv.LastPart(k)
+	}
+	return m, boxes, nil
 }
 
 func (e *KVEngine) Usage(_ context.Context, a string) (quota.Usage, error) {
@@ -152,17 +195,21 @@ func (e *KVEngine) CreateMessage(_ context.Context, a, mailboxID string, literal
 		return "", err
 	}
 	id := newID()
-	msg := Message{ID: id, Size: int64(len(literal)), Flags: normalizeFlags(flags), Date: date}
+	msg := Message{ID: id, Size: int64(len(literal)), Flags: normalizeFlags(flags), Date: date, MessageID: HeaderMessageID(literal)}
 	u.StorageBytes += msg.Size
 	u.Messages++
 	return id, e.db.Batch(func(b kv.Batch) error {
-		return errors.Join(
+		err := errors.Join(
 			kv.SetJSON(b, kMessage(a, id), msg),
 			b.Set(kBody(a, id), literal),
 			b.Set(kIn(a, mailboxID, id), nil),
 			b.Set(kMsgIn(a, id, mailboxID), nil),
 			kv.SetJSON(b, kUsage(a), u),
 		)
+		if err == nil && msg.MessageID != "" {
+			err = b.Set(kMid(a, msg.MessageID, id), nil)
+		}
+		return err
 	})
 }
 
@@ -302,6 +349,11 @@ func (e *KVEngine) leave(b kv.Batch, a string, ids []string, mailboxID string) e
 		}
 		if err := errors.Join(b.Delete(kMessage(a, id)), b.Delete(kBody(a, id))); err != nil {
 			return err
+		}
+		if m.MessageID != "" {
+			if err := b.Delete(kMid(a, m.MessageID, id)); err != nil {
+				return err
+			}
 		}
 		u.StorageBytes = max(0, u.StorageBytes-m.Size)
 		u.Messages = max(0, u.Messages-1)
