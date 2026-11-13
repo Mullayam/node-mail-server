@@ -27,12 +27,36 @@ LMTP answers once per recipient, so each recipient gets its own result. The Node
 
 | What happened | SMTP reply to the sender |
 |---------------|--------------------------|
-| At least one mailbox took the message | `250` |
-| IMAP server down, slow or busy | `450`: the sender retries later, nothing is lost |
+| Every mailbox took the message | `250` |
+| IMAP server down, slow or busy, or any recipient hit a temporary error | `450` for the whole message: the sender retries later, nothing is lost |
+| Some recipients have a mailbox and others do not | `250`: delivered to those who do, the rest are logged |
 | No recipient has a mailbox (unknown, or IMAP off) | `550 5.1.1` |
 | Every recipient is over quota | `552` |
 
+When the sender retries after a `450`, mailboxes that already have the message skip it, so nobody gets two copies. The IMAP server records each delivered Message-ID per user in a small SQLite file, `dedupe.db`, in the Gluon data directory (`/data/gluon`). The record:
+
+- survives a restart, because it is on the data volume;
+- is deleted when the user deletes the message (expunge, or deleting its folder), so a message deleted on purpose can arrive again;
+- expires after 24 hours otherwise;
+- is never used for a message with no Message-ID header, which is always stored.
+
+If the file cannot be read, the message is stored anyway: a duplicate is better than lost mail.
+
 The LMTP port is only for the Docker network. It accepts connections only from the networks in `<lmtp trusted>`, and the compose file never publishes it.
+
+## Live updates
+
+Delivery does not wait for a client to ask. After the message is stored, the connector puts a "message created" update on its `GetUpdates` stream and waits until Gluon has applied it. Gluon then announces the new message (`* N EXISTS`) to every session of that user that is waiting in IDLE or has the mailbox open. In the Docker test, two open sessions of one user saw a new message about 10 ms after delivery started.
+
+By default Gluon holds these notices for 500 ms and merges them. This server turns that off, so each message is announced at once:
+
+```xml
+<idle bulk="0s"/>
+```
+
+A value such as `bulk="500ms"` sends fewer, merged updates when many messages arrive together. Changing it needs a container restart.
+
+Mail clients that use IDLE (Thunderbird, Apple Mail and most phone apps) show new mail immediately. A client that does not use IDLE learns about it on its next command, which is how IMAP works.
 
 ## Spam and the Junk folder
 
@@ -63,6 +87,7 @@ Each part is a separate package with a small interface, so you can replace any o
 |------|---------|--------------|
 | Gluon server | `main.go`, `core/` | Starts Gluon and loads the IMAP-enabled users. The connector (`core/connector/db.go`) implements all 16 methods of Gluon's `connector.Connector`, and a compile-time check fails the build if Gluon adds one. |
 | Delivery | `core/deliver.go`, `internal/lmtp`, `internal/filing` | The LMTP listener, the INBOX-or-Junk decision, and the push to Gluon. |
+| Duplicates | `internal/dedupe` | The SQLite record of delivered Message-IDs that stops a retried message being stored twice. |
 | Config | `internal/conf` | Reads `imap.xml`: listeners, TLS, LMTP, data dir, users, storage, quota, delivery rules. |
 | Users | `internal/directorykind` | The user list. The `file` kind reads and writes `users.xml`. `postgres` is a placeholder. |
 | Quota | `internal/quota` | Default and per-user limits. Refuses a message that would go over. |
@@ -89,6 +114,7 @@ cp server/imap/conf/users.example.xml server/imap/conf/users.xml
     <data dir="/data/gluon"/>
     <tls cert="/etc/ssl/imap/fullchain.pem" key="/etc/ssl/imap/privkey.pem" listen="0.0.0.0:993"/>
     <lmtp listen="0.0.0.0:24" trusted="127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"/>
+    <idle bulk="0s"/>
   </settings>
   <directory kind="file" source="/etc/imap/users.xml"/>
   <storage engine="pebble" path="/data/mail"/>
@@ -118,7 +144,7 @@ docker compose -f deploy/docker-compose.yml exec imap imapctl reload
 
 It works like `caddy reload`: the new files are validated first and swapped in atomically, with no restart and no dropped connections. If a file is invalid, its old version stays live and `imapctl` exits with code 1 and says why. A reload re-reads `imap.xml`, the TLS certificate and `users.xml`, then loads or unloads users in Gluon.
 
-`imapctl reloadxml` and `docker kill -s HUP <container>` do the same. The one difference from Caddy: changing a listen address (143, 993, LMTP), the data dir, the user kind or the storage engine needs a container restart, and the reload output says so.
+`imapctl reloadxml` and `docker kill -s HUP <container>` do the same. The one difference from Caddy: changing a listen address (143, 993, LMTP), the data dir, the IDLE bulk time, the user kind or the storage engine needs a container restart, and the reload output says so.
 
 ## Admin commands
 
@@ -165,7 +191,7 @@ To put another database under the same engine, implement `kv.Store` and register
 |-------|------------------|------|
 | `server/imap/conf` | `/etc/imap` | read-write, so `imapctl` can save `users.xml` |
 | `server/imap/tls` | `/etc/ssl/imap` | read-only |
-| `imap-data` volume | `/data` | read-write: mail and Gluon's cache. Back it up. |
+| `imap-data` volume | `/data` | read-write: mail, Gluon's cache and the delivered-message record (`dedupe.db`). Back it up. |
 
 The container runs as uid 1000. On a Linux host: `sudo chown -R 1000:1000 server/imap/conf`.
 
@@ -186,5 +212,5 @@ User kinds and storage engines are registered by name. Embed the `Unimplemented`
 ## Not done yet
 
 - **Content spam scanning.** A scanner such as Rspamd would sit in the Node server before the LMTP hand-off and add `X-Spam-Flag`. Filing already honours it.
-- **Partial temporary failures.** When some recipients get the message and others hit a temporary error, the message is accepted and the failure is logged, but not retried.
+- **Telling the sender about refused recipients.** When some recipients have no mailbox but others do, the message is accepted and the refusals are only logged. A bounce to the sender is not sent.
 - **Hashed passwords.** A user kind that reads your SMTP user store should compare hashes.
