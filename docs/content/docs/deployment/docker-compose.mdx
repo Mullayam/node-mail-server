@@ -45,12 +45,21 @@ The `inbound` image runs `bun src/main.ts`, because Bun resolves the `@/` path a
 | `kumo-logs` | `/var/log/kumomta` | KumoMTA's logs. |
 | `relay-spool` | `/var/spool/kumomta` | The relay's queued messages and pending webhook events. |
 | `relay-logs` | `/var/log/kumomta` | The relay's logs. |
-| `imap-data` | `/data` | Stored mail (Pebble, in `/data/mail`) and Gluon's cache (`/data/gluon`). Back this volume up. |
+| `imap-data` | `/data` (read-write) | Stored mail (Pebble, in `/data/mail`) and Gluon's cache (`/data/gluon`). Back this volume up. |
 | `redis-data` | `/data` | Redis data. |
 
 `outbound/policy/` is mounted read-only at `/opt/kumomta/etc/policy`. To use file-based DKIM keys, uncomment the `outbound/dkim` mount in the compose file.
 
 The `relay` service mounts `relay/policy/` the same way, and has its own commented-out mounts for `relay/dkim` and `relay/tls`.
+
+The `imap` service mounts two folders:
+
+| Folder | Mounted at | Mode | Why |
+|--------|------------|------|-----|
+| `server/imap/conf` | `/etc/imap` | read-write | `imapctl user add/update/delete` saves `users.xml` there, with a `users.xml.bak` of the previous version. |
+| `server/imap/tls` | `/etc/ssl/imap` | read-only | The certificate and private key. The server never writes them. |
+
+The container runs as uid 1000. On a Linux host, make the config folder writable for it: `sudo chown -R 1000:1000 server/imap/conf`.
 
 ## Who owns port 587
 
@@ -62,7 +71,7 @@ Only one program can publish a host port. In this compose file:
 To send through the Node app instead, publish 587 on `inbound` and remove it from `outbound`. To use KumoMTA as a relay behind the Node app, keep KumoMTA's port private and point `OUTBOUND_RELAY_HOST` at the `outbound` service. The two services share a Docker network, so `outbound` resolves by name.
 
 <Callout title="IMAP is opt-in" type="warn">
-  IMAP is behind a profile. Port 143 is published on `127.0.0.1` only. Port 993 is public, but answers only after you put a certificate in `server/imap/tls/` and enable `<tls>`. Mail received on port 25 is not written into IMAP storage yet. See [IMAP](/docs/imap/overview).
+  IMAP is behind a profile. Port 143 is published on `127.0.0.1` only. Port 993 is public, but answers only after you put a certificate in `server/imap/tls/` and enable `<tls>`. To store mail received on port 25, set `IMAP_LMTP_HOST=imap` in `server/.env`. The LMTP port (24) stays on the Docker network and is never published. See [IMAP](/docs/imap/overview).
 </Callout>
 
 ## Everyday commands

@@ -142,6 +142,16 @@ See [JSON send API](/docs/guides/json-api).
 
 See [Background workers](/docs/reference/background-workers).
 
+### IMAP storage (optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IMAP_LMTP_HOST` | unset | IMAP server to store incoming mail in, over LMTP. In Docker: `imap`. Unset: mail is checked but not stored. |
+| `IMAP_LMTP_PORT` | `24` | The IMAP server's LMTP port. |
+| `IMAP_LMTP_TIMEOUT_MS` | `60000` | Longest wait for the IMAP server. After that the sender is told to retry. |
+
+See [IMAP](/docs/imap/overview#how-mail-gets-into-imap).
+
 ### ARC (optional)
 
 | Variable | Default | Description |
