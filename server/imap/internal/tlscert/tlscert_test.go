@@ -15,7 +15,6 @@ import (
 	"time"
 )
 
-// selfSigned writes a certificate valid until notAfter and returns its paths.
 func selfSigned(t *testing.T, dir string, notAfter time.Time) (string, string) {
 	t.Helper()
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -50,7 +49,6 @@ func TestLoadReloadAndConfig(t *testing.T) {
 		t.Fatalf("NotAfter = %v, want %v", s.NotAfter(), first)
 	}
 
-	// A broken file is refused and the old certificate stays.
 	bad := filepath.Join(dir, "bad.pem")
 	os.WriteFile(bad, []byte("not a cert"), 0o600)
 	if err := s.Reload(bad, key); err == nil {
@@ -60,7 +58,6 @@ func TestLoadReloadAndConfig(t *testing.T) {
 		t.Fatal("old certificate was dropped")
 	}
 
-	// A renewed certificate is used by the same tls.Config from now on.
 	cfg := s.Config()
 	renewed := time.Now().Add(90 * 24 * time.Hour).Truncate(time.Second)
 	cert2, key2 := selfSigned(t, t.TempDir(), renewed)

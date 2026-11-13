@@ -1,8 +1,3 @@
-// Package conf reads imap.xml and keeps the live copy that reload swaps.
-//
-// imap.xml only says how the server is put together: where to listen, which
-// directory kind holds the users, which storage engine holds the mail, and
-// the default quota. The users themselves live in the directory.
 package conf
 
 import (
@@ -30,32 +25,23 @@ const (
 	DefaultDataDir   = "/data"
 )
 
-// TLS is set when <tls cert key> is configured. Then the server also listens
-// on 993 with implicit TLS and offers STARTTLS on 143.
 type TLS struct {
 	Cert   string `json:"cert,omitempty"`
 	Key    string `json:"key,omitempty"`
 	Listen string `json:"listen,omitempty"`
 }
 
-// Enabled reports whether a certificate is configured.
 func (t TLS) Enabled() bool { return t.Cert != "" }
 
-// DefaultLMTPTrusted are the networks allowed to deliver over LMTP when
-// <lmtp trusted> is not set: loopback and the private ranges Docker uses.
 var DefaultLMTPTrusted = []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
 
-// LMTP is set when <lmtp listen> is configured. The mail server delivers
-// incoming mail to it, and each message shows up in IMAP at once.
 type LMTP struct {
 	Listen  string         `json:"listen,omitempty"`
 	Trusted []netip.Prefix `json:"trusted,omitempty"`
 }
 
-// Enabled reports whether the LMTP listener is configured.
 func (l LMTP) Enabled() bool { return l.Listen != "" }
 
-// Allows reports whether a client address may deliver.
 func (l LMTP) Allows(addr netip.Addr) bool {
 	addr = addr.Unmap()
 	for _, p := range l.Trusted {
@@ -66,15 +52,11 @@ func (l LMTP) Allows(addr netip.Addr) bool {
 	return false
 }
 
-// Plugin names a pluggable backend and passes every other attribute to it as
-// an option. <storage engine="postgres" dsn="..."/> gives Name "postgres" and
-// Options {"dsn": "..."}.
 type Plugin struct {
 	Name    string
 	Options map[string]string
 }
 
-// pluginXML reads a plugin element; key is the attribute that names it.
 func pluginXML(d *xml.Decoder, start xml.StartElement, key string) (Plugin, error) {
 	p := Plugin{Options: map[string]string{}}
 	for _, a := range start.Attr {
@@ -132,13 +114,11 @@ type file struct {
 	} `xml:"delivery"`
 }
 
-// Default delivery rules, used when <delivery> is missing.
 var (
 	DefaultSpamMailbox = "Junk"
 	DefaultSpamHeaders = []string{"X-AE-Spam-Flag", "X-Spam-Flag"}
 )
 
-// Conf is a parsed and validated imap.xml.
 type Conf struct {
 	Listen    string
 	TLS       TLS
@@ -147,11 +127,10 @@ type Conf struct {
 	Directory Plugin
 	Storage   Plugin
 	Quota     quota.Limit
-	Delivery  filing.Rules // where spam goes; applied live on reload
+	Delivery  filing.Rules
 	Warnings  []string
 }
 
-// Load reads and parses the file at path.
 func Load(path string) (*Conf, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -160,7 +139,6 @@ func Load(path string) (*Conf, error) {
 	return Parse(data)
 }
 
-// Parse validates the XML and reports every problem it finds.
 func Parse(data []byte) (*Conf, error) {
 	var f file
 	if err := xml.Unmarshal(data, &f); err != nil {
@@ -261,7 +239,6 @@ func checkListen(addr string) error {
 	return nil
 }
 
-// Snapshot is one loaded version of imap.xml.
 type Snapshot struct {
 	*Conf
 	Generation uint64
@@ -269,15 +246,12 @@ type Snapshot struct {
 	Path       string
 }
 
-// Holder keeps the live Snapshot. Current() never blocks; Reload swaps in a
-// new Snapshot only when the file is valid.
 type Holder struct {
 	path string
 	mu   sync.Mutex
 	cur  atomic.Pointer[Snapshot]
 }
 
-// NewHolder loads the file for the first time.
 func NewHolder(path string) (*Holder, error) {
 	c, err := Load(path)
 	if err != nil {
@@ -288,10 +262,8 @@ func NewHolder(path string) (*Holder, error) {
 	return h, nil
 }
 
-// Current returns the live configuration.
 func (h *Holder) Current() *Snapshot { return h.cur.Load() }
 
-// ReloadReport says what changed in imap.xml.
 type ReloadReport struct {
 	Generation      uint64   `json:"generation"`
 	QuotaChanged    bool     `json:"quota_changed"`
@@ -299,7 +271,6 @@ type ReloadReport struct {
 	Warnings        []string `json:"warnings,omitempty"`
 }
 
-// Reload re-reads imap.xml. On error the old configuration stays live.
 func (h *Holder) Reload() (*ReloadReport, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

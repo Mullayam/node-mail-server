@@ -71,7 +71,6 @@ func TestReload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Invalid file: refused, generation 1 stays live.
 	write(t, path, `<imap><broken`)
 	if _, err := h.Reload(); err == nil {
 		t.Fatal("reload of an invalid file should fail")
@@ -80,7 +79,6 @@ func TestReload(t *testing.T) {
 		t.Fatalf("generation = %d, want 1", g)
 	}
 
-	// Quota change applies; listen change needs a restart.
 	write(t, path, `<imap><settings><listen address="0.0.0.0:1143"/></settings>`+
 		`<directory kind="file" source="u.xml"/><storage engine="dir" path="/m"/><quota storage="2GB"/></imap>`)
 	rep, err := h.Reload()
