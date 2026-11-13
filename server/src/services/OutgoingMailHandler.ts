@@ -147,11 +147,13 @@ class OutgoingMailHandler {
 				return callback(smtpReply("NO_VALID_RECIPIENTS").toError());
 			}
 
+			const user = typeof session.user === "string" ? session.user : "";
 			const queueId = await submitOutgoing({
 				sender,
 				recipients,
 				raw: message,
 				source: `smtp ${session.remoteAddress}:${session.remotePort}`,
+				outboxOwner: (user.includes("@") ? user : sender) || undefined,
 			});
 
 			return callback(null, smtpReply("MESSAGE_QUEUED", { id: queueId }).text);

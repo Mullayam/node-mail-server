@@ -6,12 +6,23 @@ import { RawMessage } from "../lib/helpers/RawMessage";
 import { Logging } from "../lib/logs";
 import { mailWorkers } from "../lib/workers";
 import { getMailRuntime } from "../server/mta/runtime";
+import { ImapOutbox } from "./ImapOutbox";
 
 export interface OutgoingSubmission {
 	sender: string;
 	recipients: string[];
 	raw: Buffer;
 	source: string;
+	outboxOwner?: string;
+}
+
+function withMessageId(raw: Buffer, queueId: string, sender: string): Buffer {
+	if (/^message-id[ \t]*:/im.test(RawMessage.headers(raw))) return raw;
+	const domain = sender.split("@")[1] || env.server.outgoingHost;
+	return RawMessage.prependHeaders(
+		raw,
+		`Message-ID: <${queueId}@${domain}>\r\n`,
+	);
 }
 
 const singleLine = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
@@ -42,19 +53,24 @@ export async function submitOutgoing({
 	recipients,
 	raw,
 	source,
+	outboxOwner,
 }: OutgoingSubmission): Promise<string> {
 	const config = mailConfig.get().outgoing;
 	const { queue, bounces } = getMailRuntime();
 	const queueId = randomUUID();
 	const bounceAddress = bounces.bounceAddressFor(queueId, sender);
+	const original = withMessageId(raw, queueId, sender);
 
 	const added = outgoingHeaders(queueId, sender, bounceAddress);
 	const replaced = new Set([
 		"bcc",
+		HEADER.OUTBOX.toLowerCase(),
 		...Object.keys(added).map((name) => name.toLowerCase()),
 	]);
 	const prepared = RawMessage.prependHeaders(
-		RawMessage.stripHeaders(raw, (name) => replaced.has(name.toLowerCase())),
+		RawMessage.stripHeaders(original, (name) =>
+			replaced.has(name.toLowerCase()),
+		),
 		Object.entries(added)
 			.map(([name, value]) => `${name}: ${value}\r\n`)
 			.join(""),
@@ -87,7 +103,9 @@ export async function submitOutgoing({
 		recipients,
 		raw: signed,
 		dsn: { notify: ["FAILURE", "DELAY"], returnHeaders: true },
+		outboxOwner,
 	});
+	ImapOutbox.queued(queueId, outboxOwner, original);
 
 	Logging.dev(
 		`Outgoing mail queued id = ${queueId} source = ${source} driver = ${queue.driverName} from = ${sender || "<>"} to ${recipients.join(",")}`,

@@ -67,6 +67,7 @@ export const HEADER = {
 	SPAM_FLAG: "X-AE-Spam-Flag",
 	POLICY_FLAGS: "X-AE-Policy-Flags",
 	BOUNCE_ADDRESS: "X-AE-Bounce-Address",
+	OUTBOX: "X-AE-Outbox",
 } as const;
 
 export const HEADER_NAME_PATTERN = /^[!-9;-~]+$/;
@@ -218,6 +219,7 @@ export const DEFAULTS = {
 	SPOOL_DIR: "spool",
 	DATA_DIR: "data",
 	SERVER_DB_FILE: "server.db",
+	OUTBOX_SENT_GRACE_MS: 5_000,
 } as const;
 
 export interface CheckSettings {
@@ -266,6 +268,7 @@ export interface MailConfig {
 		rateLimit: { enabled: boolean; maxConnectionsPerMinute: number | null };
 		dkimSign: boolean;
 		bounceHeader: { enabled: boolean; name: string };
+		imapOutbox: CheckSettings;
 		customHeaders: { enabled: boolean; headers: Record<string, string> };
 	};
 	api: CheckSettings;
@@ -356,6 +359,7 @@ export const DEFAULT_MAIL_CONFIG: MailConfig = {
 		rateLimit: { enabled: true, maxConnectionsPerMinute: null },
 		dkimSign: true,
 		bounceHeader: { enabled: true, name: HEADER.BOUNCE_ADDRESS },
+		imapOutbox: { enabled: true },
 		customHeaders: { enabled: false, headers: {} },
 	},
 	api: { enabled: true },

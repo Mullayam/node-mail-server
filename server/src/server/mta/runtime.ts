@@ -5,9 +5,10 @@ import { Logging } from "../../lib/logs";
 import { BounceProcessor } from "../../services/bounce/BounceProcessor";
 import { BounceRegistry } from "../../services/bounce/BounceRegistry";
 import { SuppressionList } from "../../services/bounce/SuppressionList";
+import { ImapOutbox } from "../../services/ImapOutbox";
 import { createOutboundDriver } from "./drivers";
 import { NodeMailerMTA } from "./node-mta";
-import { OutboundQueue } from "./OutboundQueue";
+import { OutboundQueue, type QueueSettledEvent } from "./OutboundQueue";
 import type { OutboundDriver } from "./types";
 
 export interface MailRuntime {
@@ -53,6 +54,14 @@ function createMailRuntime(): MailRuntime {
 		() => mailConfig.get().bounces.trackingDays * DAY_MS,
 	);
 	const bounces = new BounceProcessor({ queue, registry, suppression });
+	queue.on("settled", (event: QueueSettledEvent) =>
+		ImapOutbox.settled(event).catch((error) =>
+			Logging.dev(
+				`Outbox update failed for ${event.job.id}: ${error}`,
+				"error",
+			),
+		),
+	);
 	Logging.dev(`Outbound driver: ${driver.name}, spool: ${spoolDir}`);
 	return { mta, driver, queue, suppression, registry, bounces };
 }

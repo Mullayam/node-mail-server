@@ -73,6 +73,9 @@
 			"enabled": true,
 			"name": "X-AE-Bounce-Address"
 		},
+		"imapOutbox": {
+			"enabled": true
+		},
 		"customHeaders": {
 			"enabled": false,
 			"headers": {}
