@@ -18,8 +18,9 @@ import (
 //
 //	<directory kind="file" source="/etc/imap/users.xml"/>
 //
-// Reading and reloading work. Add, Update and Delete are stubs: edit
-// users.xml and run "imapctl reload" instead, or implement them below.
+// Reading, reloading and writing all work: "imapctl user add/update/delete"
+// and "imapctl quota set" save users.xml (the container needs it mounted
+// read-write). Editing the file by hand and running "imapctl reload" also works.
 func init() {
 	Register("file", func(opts map[string]string) (Directory, error) {
 		src := opts["source"]
@@ -168,16 +169,127 @@ func (f *File) Authenticate(ctx context.Context, address, password string) (User
 	return u, nil
 }
 
-// Add, Update and Delete are stubs for the file kind. To implement them:
-// change f.users under f.mu, write the whole map back to f.Source as XML
-// (write to a temp file, then rename it over the old one), and return nil.
-// The router already calls Sync afterwards, so Gluon picks up the change.
-func (f *File) Add(context.Context, User) error {
-	return f.err("add (edit users.xml, then imapctl reload)")
+// Add, Update and Delete change the users in memory and write users.xml.
+// The router calls Sync afterwards, so Gluon picks up the change.
+
+func (f *File) Add(_ context.Context, u User) error {
+	return f.change(func(users map[string]User) error {
+		u.Address = Normalize(u.Address)
+		if err := checkUser(u); err != nil {
+			return err
+		}
+		if _, ok := users[u.Address]; ok {
+			return fmt.Errorf("%w: %s", ErrExists, u.Address)
+		}
+		users[u.Address] = u
+		return nil
+	})
 }
-func (f *File) Update(context.Context, User) error {
-	return f.err("update (edit users.xml, then imapctl reload)")
+
+func (f *File) Update(_ context.Context, u User) error {
+	return f.change(func(users map[string]User) error {
+		u.Address = Normalize(u.Address)
+		if _, ok := users[u.Address]; !ok {
+			return fmt.Errorf("%w: %s", ErrNotFound, u.Address)
+		}
+		if err := checkUser(u); err != nil {
+			return err
+		}
+		users[u.Address] = u
+		return nil
+	})
 }
-func (f *File) Delete(context.Context, string) error {
-	return f.err("delete (edit users.xml, then imapctl reload)")
+
+func (f *File) Delete(_ context.Context, address string) error {
+	return f.change(func(users map[string]User) error {
+		addr := Normalize(address)
+		if _, ok := users[addr]; !ok {
+			return fmt.Errorf("%w: %s", ErrNotFound, addr)
+		}
+		delete(users, addr)
+		return nil
+	})
+}
+
+func checkUser(u User) error {
+	id, domain, ok := strings.Cut(u.Address, "@")
+	switch {
+	case !ok || id == "" || domain == "" || strings.ContainsAny(u.Address, " \"<>") || strings.Count(u.Address, "@") != 1:
+		return fmt.Errorf("invalid address %q: want user@domain", u.Address)
+	case u.Password == "":
+		return fmt.Errorf("%s: password is empty", u.Address)
+	}
+	return nil
+}
+
+// change applies fn to a copy of the users, writes the result to users.xml
+// and only then makes it live. If writing fails, nothing changes.
+func (f *File) change(fn func(map[string]User) error) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	next := make(map[string]User, len(f.users))
+	for k, v := range f.users {
+		next[k] = v
+	}
+	if err := fn(next); err != nil {
+		return err
+	}
+	if err := f.write(next); err != nil {
+		return fmt.Errorf("file directory: write %s: %w", f.Source, err)
+	}
+	f.users = next
+	return nil
+}
+
+// write saves users.xml. The previous file is kept as users.xml.bak, and the
+// new one is written to a temp file and renamed into place, so a crash never
+// leaves a half-written file. Comments in the old file are not kept.
+func (f *File) write(users map[string]User) error {
+	byDomain := map[string][]User{}
+	for _, u := range users {
+		_, domain, _ := strings.Cut(u.Address, "@")
+		byDomain[domain] = append(byDomain[domain], u)
+	}
+	domains := make([]string, 0, len(byDomain))
+	for d := range byDomain {
+		domains = append(domains, d)
+	}
+	sort.Strings(domains)
+
+	var b strings.Builder
+	b.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+	b.WriteString("<!-- Written by imapctl. Editing by hand is fine: run \"imapctl reload\" afterwards. -->\n<users>\n")
+	for _, d := range domains {
+		fmt.Fprintf(&b, "  <domain name=%s>\n", xmlAttr(d))
+		list := byDomain[d]
+		sort.Slice(list, func(i, j int) bool { return list[i].Address < list[j].Address })
+		for _, u := range list {
+			id, _, _ := strings.Cut(u.Address, "@")
+			fmt.Fprintf(&b, "    <user id=%s password=%s imap=\"%t\"", xmlAttr(id), xmlAttr(u.Password), u.IMAP)
+			if u.Quota != nil {
+				fmt.Fprintf(&b, " quota-storage=%s quota-messages=\"%d\"", xmlAttr(quota.FormatSize(u.Quota.StorageBytes)), u.Quota.Messages)
+			}
+			b.WriteString("/>\n")
+		}
+		b.WriteString("  </domain>\n")
+	}
+	b.WriteString("</users>\n")
+
+	if old, err := os.ReadFile(f.Source); err == nil {
+		if err := os.WriteFile(f.Source+".bak", old, 0o600); err != nil {
+			return err
+		}
+	}
+	tmp := f.Source + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, f.Source)
+}
+
+// xmlAttr quotes and escapes an attribute value.
+func xmlAttr(s string) string {
+	var b strings.Builder
+	xml.EscapeText(&b, []byte(s))
+	return `"` + strings.ReplaceAll(b.String(), `"`, "&#34;") + `"`
 }

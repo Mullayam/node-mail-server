@@ -61,10 +61,59 @@ func TestAuthenticate(t *testing.T) {
 	}
 }
 
-func TestFileWritesAreStubs(t *testing.T) {
-	d := openExample(t)
-	if err := d.Add(context.Background(), User{Address: "new@example.com"}); !errors.Is(err, ErrNotImplemented) {
-		t.Errorf("Add err = %v, want ErrNotImplemented", err)
+func TestFileWritesPersist(t *testing.T) {
+	ctx := context.Background()
+	src, _ := os.ReadFile("../../conf/users.example.xml")
+	path := filepath.Join(t.TempDir(), "users.xml")
+	os.WriteFile(path, src, 0o600)
+	d, _ := Open("file", map[string]string{"source": path})
+	if err := d.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.Add(ctx, User{Address: "Carol@Example.org", Password: "pw", IMAP: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Add(ctx, User{Address: "carol@example.org", Password: "pw"}); !errors.Is(err, ErrExists) {
+		t.Errorf("duplicate add: %v", err)
+	}
+	if err := d.Add(ctx, User{Address: "no-at-sign", Password: "pw"}); err == nil {
+		t.Error("an address without @ should be refused")
+	}
+	u, _ := d.Get(ctx, "bob@example.org")
+	u.IMAP = true
+	if err := d.Update(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Delete(ctx, "noreply@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Delete(ctx, "ghost@example.com"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("delete unknown: %v", err)
+	}
+	if _, err := os.Stat(path + ".bak"); err != nil {
+		t.Errorf("no backup written: %v", err)
+	}
+
+	// A fresh directory reads back exactly what was written.
+	again, _ := Open("file", map[string]string{"source": path})
+	if err := again.Load(ctx); err != nil {
+		t.Fatalf("written file does not load: %v", err)
+	}
+	for addr, imap := range map[string]bool{"carol@example.org": true, "bob@example.org": true, "user1@example.com": true} {
+		got, err := again.Get(ctx, addr)
+		if err != nil || got.IMAP != imap {
+			t.Errorf("%s: %+v %v", addr, got, err)
+		}
+	}
+	if _, err := again.Get(ctx, "noreply@example.com"); !errors.Is(err, ErrNotFound) {
+		t.Error("deleted user came back")
+	}
+	if got, _ := again.Get(ctx, "user1@example.com"); got.Quota == nil || got.Quota.StorageBytes != 2<<30 {
+		t.Errorf("quota lost on rewrite: %+v", got.Quota)
+	}
+	if _, err := again.Authenticate(ctx, "carol@example.org", "pw"); err != nil {
+		t.Errorf("new user cannot log in: %v", err)
 	}
 }
 
