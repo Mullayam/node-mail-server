@@ -41,8 +41,8 @@ github.com/emersion/go-imap v1.2.1/go.mod h1:Qlx1FSx2FTxjnjWpIlVNEuX+ylerZQNFE5N
 github.com/emersion/go-message v0.15.0/go.mod h1:wQUEfE+38+7EW8p8aZ96ptg6bAb1iwdgej19uXASlE4=
 github.com/emersion/go-sasl v0.0.0-20200509203442-7bfe0ed36a21/go.mod h1:iL2twTeMvZnrg54ZoPDNfJaJaqy0xIQFuBdrLsmspwQ=
 github.com/emersion/go-textwrapper v0.0.0-20200911093747-65d896831594/go.mod h1:aqO8z8wPrjkscevZJFVE1wXJrLpC5LtJG7fqLOsPb2U=
-github.com/enjoys-in/gluon v0.0.0-20261113115540-f6e3191b676a h1:ozzDI015t+UuxavqP9RkggA1tdVzfl9hOKIlYwXGEWI=
-github.com/enjoys-in/gluon v0.0.0-20261113115540-f6e3191b676a/go.mod h1:i3CLtR5PvXNFuFLS87r/VzsB3qnLhrmVm4SK3vm9Wls=
+github.com/enjoys-in/gluon v0.0.0-20261113122638-04bbc4a9bad2 h1:onV8fq6M7xncPAs7TEufJf+ego+rv4l5XFE44z9Wvyk=
+github.com/enjoys-in/gluon v0.0.0-20261113122638-04bbc4a9bad2/go.mod h1:i3CLtR5PvXNFuFLS87r/VzsB3qnLhrmVm4SK3vm9Wls=
 github.com/felixge/fgprof v0.9.3 h1:VvyZxILNuCiUCSXtPtYmmtGvb65nqXh2QFWc0Wpf2/g=
 github.com/felixge/fgprof v0.9.3/go.mod h1:RdbpDgzqYVh/T9fPELJyV7EYJuHB55UTEULNun8eiPw=
 github.com/getsentry/sentry-go v0.27.0 h1:Pv98CIbtB3LkMWmXi4Joa5OOcwbmnX88sF5qbK3r3Ps=
