@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
@@ -18,9 +19,12 @@ import (
 	"github.com/sirupsen/logrus"
 
 	factory "imap/core"
+	"imap/core/connector"
 	"imap/internal/conf"
 	"imap/internal/control"
 	"imap/internal/directorykind"
+	"imap/internal/filing"
+	"imap/internal/lmtp"
 	"imap/internal/quota"
 	"imap/internal/router"
 	"imap/internal/storage"
@@ -38,6 +42,23 @@ var (
 	configFlag       = flag.String("config", env("IMAP_CONFIG", "conf/imap.xml"), "Path to imap.xml.")
 	socketFlag       = flag.String("socket", env("IMAP_CONTROL_SOCKET", control.DefaultSocket()), "Control socket used by imapctl.")
 )
+
+// classifyDeliveryError turns a delivery error into the LMTP reply the
+// sending server sees: permanent (5xx, do not retry) or temporary (4xx).
+func classifyDeliveryError(err error) lmtp.Reply {
+	switch {
+	case errors.Is(err, factory.ErrNotIMAPUser):
+		return lmtp.Reply{Code: 550, Status: "5.1.1", Text: "no such mailbox"}
+	case errors.Is(err, quota.ErrExceeded):
+		return lmtp.Reply{Code: 552, Status: "5.2.2", Text: "mailbox is over quota"}
+	case errors.Is(err, storage.ErrMailboxNotFound):
+		return lmtp.Reply{Code: 550, Status: "5.2.0", Text: "mailbox not found"}
+	case errors.Is(err, connector.ErrInvalidMessage):
+		return lmtp.Reply{Code: 554, Status: "5.6.0", Text: "message cannot be parsed"}
+	default:
+		return lmtp.Reply{Code: 451, Status: "4.3.0", Text: "temporary failure, try again later"}
+	}
+}
 
 func env(name, fallback string) string {
 	if v := os.Getenv(name); v != "" {
@@ -137,6 +158,8 @@ func main() {
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to create connector factory")
 	}
+	// Spam filing follows <delivery> in imap.xml, read on every message.
+	instance.SetFilingRules(func() filing.Rules { return holder.Current().Delivery })
 	err = instance.InitializeUsers(ctx)
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to initialize IMAP users")
@@ -149,6 +172,7 @@ func main() {
 		Directory: dir,
 		Quota:     quotas,
 		Gluon:     instance,
+		Mail:      instance,
 		Version:   version,
 		Started:   time.Now(),
 	}
@@ -198,6 +222,29 @@ func main() {
 		logrus.WithError(err).Fatal("Failed to serve")
 	}
 
+	// LMTP: the mail server delivers incoming mail here. Not for the internet:
+	// only clients in <lmtp trusted> may connect.
+	var lmtpServer *lmtp.Server
+	if cfg.LMTP.Enabled() {
+		ln, err := net.Listen("tcp", cfg.LMTP.Listen)
+		if err != nil {
+			logrus.WithError(err).Fatal("Failed to listen for LMTP")
+		}
+		lmtpServer = &lmtp.Server{
+			Backend:  instance,
+			Hostname: "imap",
+			Allowed:  func(a netip.Addr) bool { return holder.Current().LMTP.Allows(a) },
+			MaxSize:  control.MaxRequestBytes,
+			Classify: classifyDeliveryError,
+		}
+		go func() {
+			if err := lmtpServer.Serve(ln); err != nil {
+				logrus.WithError(err).Error("LMTP listener stopped")
+			}
+		}()
+		logrus.Infof("LMTP is listening on %v", ln.Addr())
+	}
+
 	var tlsListener net.Listener
 	if certs != nil {
 		raw, err := net.Listen("tcp", cfg.TLS.Listen)
@@ -219,6 +266,9 @@ func main() {
 
 	<-ctx.Done()
 	logrus.Info("Shutting down")
+	if lmtpServer != nil {
+		lmtpServer.Shutdown()
+	}
 
 	closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

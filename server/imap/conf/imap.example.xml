@@ -21,6 +21,12 @@
       run "imapctl reload": new connections use the new certificate.
     -->
     <!-- <tls cert="/etc/ssl/imap/fullchain.pem" key="/etc/ssl/imap/privkey.pem" listen="0.0.0.0:993"/> -->
+    <!--
+      LMTP: the mail server delivers mail it receives on port 25 here, and it
+      shows up in IMAP at once. Set IMAP_LMTP_HOST=imap in server/.env to use
+      it. Only clients in "trusted" may connect: never publish this port.
+    -->
+    <lmtp listen="0.0.0.0:24" trusted="127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"/>
   </settings>
 
   <!--
@@ -32,13 +38,21 @@
 
   <!--
     Where the mail lives. "pebble" is the key-value engine on disk and is
-    fully implemented. "memory" is the same engine in memory (lost on
-    restart). "dir" and "postgres" are placeholders to implement.
+    fully implemented. Mail is never held in memory: Gluon keeps its own
+    cache. "dir" and "postgres" are placeholders to implement.
   -->
   <storage engine="pebble" path="/data/mail"/>
-  <!-- <storage engine="memory"/> -->
   <!-- <storage engine="postgres" dsn="postgres://user:pass@db/mail"/> -->
 
   <!-- Default mailbox limit. A user can override it in users.xml. -->
   <quota storage="1GB" messages="50000"/>
+
+  <!--
+    Spam filing. The mail server decides what is spam (SPF, DKIM, DMARC and
+    other checks) and marks it with a header. Delivery files a message in
+    spam-mailbox when one of spam-headers starts with YES. The folder is
+    created on first use and shown as the Junk folder in mail clients.
+    spam-mailbox="INBOX" keeps spam in the inbox. Applies on reload.
+  -->
+  <delivery spam-mailbox="Junk" spam-headers="X-AE-Spam-Flag,X-Spam-Flag"/>
 </imap>
