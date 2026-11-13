@@ -57,6 +57,7 @@ See [PGP encryption](/docs/guides/pgp-encryption).
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MAIL_SPOOL_DIR` | `./spool` | Where queued mail, the bounce tracking records and the suppression list are stored. |
+| `MAIL_DATA_DIR` | `./data` | SQLite files the server keeps: `ip-blocks.db`, the blocked IPs. `/app/data` on the `inbound-data` volume in Docker. |
 | `MAIL_CONFIG_PATH` | `./config/mail.config.json` | Behaviour: checks, limits, queue and bounces. |
 | `SMTP_MESSAGES_PATH` | `./config/smtp-messages.json` | The text and code of each SMTP reply. |
 

@@ -57,7 +57,10 @@ The reverse DNS check runs when the client connects. The sender checks run at `M
 |---------|---------|-------------|
 | `incoming.maxMessageSizeBytes` | `10485760` | Largest message accepted on port 25. |
 | `incoming.maxRecipients` | `100` | Recipients for each message on port 25. |
-| `incoming.rateLimit` | on, `100` | `enabled` and `maxMessagesPerMinute`. A client over the limit gets a temporary `421`. |
+| `incoming.rateLimit` | on, `100` | `enabled` and `maxMessagesPerMinute`. Going over the limit is a strike against the IP. |
+| `incoming.ipBlocking.enabled` | `true` | Keep strikes in SQLite and block an IP for good after the last temporary block. Off: short in-memory blocks only. |
+| `incoming.ipBlocking.temporaryBlockMinutes` | `15, 60` | One entry per temporary block. The strike after the last entry is permanent. `[]` blocks for good at once. |
+| `incoming.ipBlocking.strikeResetHours` | `24` | An IP with no new strike for this long starts again from strike 1. |
 | `incoming.trustedNetworks` | loopback | CIDR ranges that skip the checks and the rate limit, for example an internal relay. |
 | `incoming.recipients.acceptedDomains` | empty | Domains you accept mail for. Empty accepts any domain. |
 | `incoming.recipients.knownRecipients` | empty | Addresses you accept. Empty accepts any user. |
@@ -139,6 +142,7 @@ Change the text or the code and save. `{placeholders}` are filled in when the re
 | `MAILBOX_FULL` | `552 5.2.2` `{recipient}` |
 | `MESSAGE_TOO_LARGE` | `552 5.3.4` `{maxSize}` |
 | `NO_VALID_RECIPIENTS` | `554 5.5.1` |
+| `IP_BLOCKED` | `554 5.7.1` `{ip}` The IP is blocked for good. |
 
 <Callout title="Not every reply is here">
   Replies that smtp-server sends itself, such as command syntax errors or `530 Authentication required`, are not in this file.

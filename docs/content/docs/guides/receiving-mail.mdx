@@ -18,7 +18,7 @@ When an email arrives on port 25, it goes through four stages.
 
 ### 2. MAIL FROM
 
-- Applies a per-IP rate limit (`incoming.rateLimit`). When a client goes over it, the server answers with a temporary `421` error, so a legitimate sender retries later.
+- Applies a per-IP rate limit (`incoming.rateLimit`). Going over it counts as a strike against the IP. See [Blocking abusive IPs](#blocking-abusive-ips).
 - Rejects `.temp@` addresses and known disposable sender addresses (`checks.disposableSender`).
 - Rejects the sender when its domain has no MX, A or AAAA record (`checks.senderDomain`). It answers with a temporary `451` if DNS is down, so the sender retries.
 - Accepts a null sender (`MAIL FROM:<>`) without the domain check, because delivery failure notices (bounces) are sent that way.
@@ -43,6 +43,41 @@ When an email arrives on port 25, it goes through four stages.
 <Callout title="Custom headers are added after the checks">
   The `X-AE-*` headers are added only after authentication has finished, so they never break a DKIM signature.
 </Callout>
+
+## Blocking abusive IPs
+
+An IP that sends more than `incoming.rateLimit.maxMessagesPerMinute` messages in a minute gets a strike. Each strike blocks it for longer, and the last one blocks it for good:
+
+| Strike | Default block | Reply to every connection from that IP |
+|--------|---------------|----------------------------------------|
+| 1 | 15 minutes | `421 4.7.0` try again in N seconds |
+| 2 | 60 minutes | `421 4.7.0` try again in N seconds |
+| 3 | permanent | `554 5.7.1` blocked, contact the postmaster |
+
+A temporary block is a `421`, so a real mail server only waits and retries. A blocked IP is refused as soon as it connects, before any other check runs.
+
+Strikes are kept in SQLite, in `MAIL_DATA_DIR/ip-blocks.db`, so a block survives a restart. An IP that stays clean for `strikeResetHours` (24 by default) starts again from strike 1. Networks in `incoming.trustedNetworks` are never limited or blocked.
+
+```json
+"ipBlocking": {
+  "enabled": true,
+  "temporaryBlockMinutes": [15, 60],
+  "strikeResetHours": 24
+}
+```
+
+`temporaryBlockMinutes` has one entry per temporary block, and the next strike is permanent. `[15, 60]` gives two temporary blocks, then a permanent one. `[]` blocks for good on the first strike. With `enabled: false`, going over the limit only gives short temporary blocks that are kept in memory.
+
+To see and change the list, run the CLI in the server folder, or in the container:
+
+```bash
+bun src/cli/ipBlocks.ts list
+bun src/cli/ipBlocks.ts unblock 203.0.113.7
+bun src/cli/ipBlocks.ts block 203.0.113.7 "spam run"
+docker compose -f deploy/docker-compose.yml exec inbound bun src/cli/ipBlocks.ts list
+```
+
+Changes apply at once, without a restart. In Docker the file is on the `inbound-data` volume.
 
 ## Policy actions
 
