@@ -72,10 +72,27 @@ export class ImapDelivery {
 						}
 						return finish(() => reject(err));
 					}
+					// nodemailer keeps verdicts given after DATA only on its private envelope
+					const envelope = (conn as unknown as { _envelope?: WithRejections })
+						._envelope;
+					const failed = toFailures(
+						envelope?.rejectedErrors ?? (info as WithRejections).rejectedErrors,
+					);
+					const explained = new Set(failed.map((f) => f.recipient));
+					for (const recipient of (info.rejected ?? []).map(String)) {
+						if (!explained.has(recipient)) {
+							failed.push({
+								recipient,
+								code: 451,
+								permanent: false,
+								message: "refused without a reason",
+							});
+						}
+					}
 					finish(() =>
 						resolve({
 							delivered: (info.accepted ?? []).map(String),
-							failed: toFailures((info as WithRejections).rejectedErrors),
+							failed,
 						}),
 					);
 				});
