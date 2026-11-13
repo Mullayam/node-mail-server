@@ -70,7 +70,6 @@ func dial(t *testing.T, addr string) *client {
 	return &client{t, c, bufio.NewReader(c)}
 }
 
-// line reads one reply line.
 func (c *client) line() string {
 	l, err := c.r.ReadString('\n')
 	if err != nil {
@@ -79,7 +78,6 @@ func (c *client) line() string {
 	return strings.TrimRight(l, "\r\n")
 }
 
-// cmd sends a command and returns the final reply line (after any 250- lines).
 func (c *client) cmd(s string) string {
 	fmt.Fprintf(c.c, "%s\r\n", s)
 	for {
@@ -107,7 +105,7 @@ func TestDeliveryPerRecipient(t *testing.T) {
 	if r := c.cmd("MAIL FROM:<>"); !strings.HasPrefix(r, "250") {
 		t.Fatalf("null sender: %q", r)
 	}
-	// A slice, not a map: LMTP answers after DATA in RCPT order.
+
 	for _, tc := range []struct{ rcpt, want string }{
 		{"alice@example.org", "250"}, {"carol@example.org", "250"}, {"nobody@other.com", "550"},
 	} {
@@ -115,21 +113,20 @@ func TestDeliveryPerRecipient(t *testing.T) {
 			t.Errorf("RCPT %s: %q, want %s", tc.rcpt, r, tc.want)
 		}
 	}
-	// Dot-stuffed line and bare LF must come out as ".x" and CRLF.
+
 	fmt.Fprintf(c.c, "DATA\r\n")
 	if r := c.line(); !strings.HasPrefix(r, "354") {
 		t.Fatalf("DATA: %q", r)
 	}
 	fmt.Fprintf(c.c, "Subject: hi\r\n\r\n..x\nbody\r\n.\r\n")
 
-	// One reply per accepted recipient, in order: alice delivered, carol full.
 	if r := c.line(); !strings.HasPrefix(r, "250 2.0.0 <alice@example.org>") {
 		t.Errorf("alice: %q", r)
 	}
 	if r := c.line(); !strings.HasPrefix(r, "552 5.2.2 <carol@example.org>") {
 		t.Errorf("carol: %q", r)
 	}
-	// LMTP leaves the mailbox empty so the backend files it (INBOX or Junk).
+
 	if got := b.got["alice@example.org"]; got != "|Subject: hi\r\n\r\n.x\r\nbody\r\n" {
 		t.Errorf("stored %q", got)
 	}

@@ -14,13 +14,6 @@ import (
 	"imap/internal/quota"
 )
 
-// The "file" kind reads users from an XML file:
-//
-//	<directory kind="file" source="/etc/imap/users.xml"/>
-//
-// Reading, reloading and writing all work: "imapctl user add/update/delete"
-// and "imapctl quota set" save users.xml (the container needs it mounted
-// read-write). Editing the file by hand and running "imapctl reload" also works.
 func init() {
 	Register("file", func(opts map[string]string) (Directory, error) {
 		src := opts["source"]
@@ -31,7 +24,6 @@ func init() {
 	})
 }
 
-// File is the users.xml directory.
 type File struct {
 	Unimplemented
 	Source string
@@ -55,7 +47,6 @@ type usersXML struct {
 	} `xml:"domain"`
 }
 
-// Load reads users.xml. If the file is invalid, the users already loaded stay.
 func (f *File) Load(context.Context) error {
 	data, err := os.ReadFile(f.Source)
 	if err != nil {
@@ -155,8 +146,6 @@ func (f *File) Get(_ context.Context, address string) (User, error) {
 	return u, nil
 }
 
-// Authenticate compares plain-text passwords (prototype only). The comparison
-// takes the same time whether or not the user exists.
 func (f *File) Authenticate(ctx context.Context, address, password string) (User, error) {
 	u, err := f.Get(ctx, address)
 	want := u.Password
@@ -168,9 +157,6 @@ func (f *File) Authenticate(ctx context.Context, address, password string) (User
 	}
 	return u, nil
 }
-
-// Add, Update and Delete change the users in memory and write users.xml.
-// The router calls Sync afterwards, so Gluon picks up the change.
 
 func (f *File) Add(_ context.Context, u User) error {
 	return f.change(func(users map[string]User) error {
@@ -222,8 +208,6 @@ func checkUser(u User) error {
 	return nil
 }
 
-// change applies fn to a copy of the users, writes the result to users.xml
-// and only then makes it live. If writing fails, nothing changes.
 func (f *File) change(fn func(map[string]User) error) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -241,9 +225,6 @@ func (f *File) change(fn func(map[string]User) error) error {
 	return nil
 }
 
-// write saves users.xml. The previous file is kept as users.xml.bak, and the
-// new one is written to a temp file and renamed into place, so a crash never
-// leaves a half-written file. Comments in the old file are not kept.
 func (f *File) write(users map[string]User) error {
 	byDomain := map[string][]User{}
 	for _, u := range users {
@@ -287,7 +268,6 @@ func (f *File) write(users map[string]User) error {
 	return os.Rename(tmp, f.Source)
 }
 
-// xmlAttr quotes and escapes an attribute value.
 func xmlAttr(s string) string {
 	var b strings.Builder
 	xml.EscapeText(&b, []byte(s))

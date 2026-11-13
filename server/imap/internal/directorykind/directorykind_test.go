@@ -25,10 +25,10 @@ func TestIMAPRuleFromExample(t *testing.T) {
 	d := openExample(t)
 	ctx := context.Background()
 	want := map[string]bool{
-		"user1@example.com":   true,  // inherits imap="true" from the domain
-		"noreply@example.com": false, // overrides the domain
-		"alice@example.org":   true,  // enabled on the user
-		"bob@example.org":     false, // domain default is off
+		"user1@example.com":   true,
+		"noreply@example.com": false,
+		"alice@example.org":   true,
+		"bob@example.org":     false,
 	}
 	users, _ := d.List(ctx)
 	if len(users) != len(want) {
@@ -95,7 +95,6 @@ func TestFileWritesPersist(t *testing.T) {
 		t.Errorf("no backup written: %v", err)
 	}
 
-	// A fresh directory reads back exactly what was written.
 	again, _ := Open("file", map[string]string{"source": path})
 	if err := again.Load(ctx); err != nil {
 		t.Fatalf("written file does not load: %v", err)

@@ -1,10 +1,3 @@
-// Package lmtp is the delivery door into IMAP storage (RFC 2033).
-//
-// The SMTP server (the Node app) accepts mail from the internet, checks it,
-// then hands each message to this listener. LMTP answers once per recipient
-// after DATA, so the sender learns exactly which mailboxes got the message.
-// The listener is unauthenticated, so it only talks to trusted networks and
-// must never be published to the internet.
 package lmtp
 
 import (
@@ -22,35 +15,28 @@ import (
 	"time"
 )
 
-// Backend stores messages. core/factory implements it.
 type Backend interface {
-	// Accepts reports whether address has a mailbox (an IMAP user).
 	Accepts(address string) bool
-	// Deliver stores literal for the user. An empty mailbox lets the backend
-	// file it (INBOX, or Junk when the message is marked as spam).
+
 	Deliver(ctx context.Context, address, mailbox string, literal []byte) (string, error)
 }
 
-// Reply is one SMTP/LMTP status line.
 type Reply struct {
 	Code   int
-	Status string // enhanced status code, for example "2.0.0"
+	Status string
 	Text   string
 }
 
 func (r Reply) String() string { return fmt.Sprintf("%d %s %s", r.Code, r.Status, r.Text) }
 
-// Server accepts LMTP connections.
 type Server struct {
 	Backend  Backend
 	Hostname string
-	// Allowed is asked for every new connection, so reloading the trusted
-	// list in imap.xml applies without a restart.
+
 	Allowed func(netip.Addr) bool
-	// MaxSize is the largest message accepted, in bytes.
+
 	MaxSize int64
-	// Classify turns a Deliver error into a reply. Unknown errors become a
-	// temporary failure, so the sender retries.
+
 	Classify func(error) Reply
 
 	mu    sync.Mutex
@@ -59,7 +45,6 @@ type Server struct {
 	wg    sync.WaitGroup
 }
 
-// Serve accepts connections until Shutdown.
 func (s *Server) Serve(ln net.Listener) error {
 	s.mu.Lock()
 	s.ln, s.conns = ln, map[net.Conn]struct{}{}
@@ -89,7 +74,6 @@ func (s *Server) Serve(ln net.Listener) error {
 	}
 }
 
-// Shutdown stops accepting, closes open sessions and waits for them.
 func (s *Server) Shutdown() {
 	s.mu.Lock()
 	if s.ln != nil {
@@ -182,7 +166,7 @@ func (s *Server) session(c net.Conn) {
 			if err != nil {
 				return
 			}
-			// LMTP: one reply per accepted recipient, in RCPT order.
+
 			for _, rcpt := range rcpts {
 				if tooBig {
 					reply("552 5.3.4 <%s>: message larger than %d bytes", rcpt, s.MaxSize)
@@ -222,7 +206,6 @@ func (s *Server) deliver(rcpt string, msg []byte) string {
 	return fmt.Sprintf("%d %s <%s>: %s", rep.Code, rep.Status, rcpt, rep.Text)
 }
 
-// readLine reads one command line without its CRLF.
 func readLine(r *bufio.Reader) (string, error) {
 	line, isPrefix, err := r.ReadLine()
 	if err != nil {
@@ -234,8 +217,6 @@ func readLine(r *bufio.Reader) (string, error) {
 	return string(line), nil
 }
 
-// pathArg reads "FROM:<a@b>" or "TO:<a@b> PARAMS" and returns the address.
-// "<>" (the null sender) gives an empty address.
 func pathArg(arg, prefix string) (string, bool) {
 	if len(arg) < len(prefix) || !strings.EqualFold(arg[:len(prefix)], prefix) {
 		return "", false
@@ -251,9 +232,6 @@ func pathArg(arg, prefix string) (string, bool) {
 	return strings.TrimSpace(rest[1:end]), true
 }
 
-// readData reads the message up to the "." line, removes dot-stuffing and
-// makes every line end in CRLF. Past max bytes it keeps reading (so the
-// session stays in step) but reports tooBig.
 func readData(r *bufio.Reader, max int64) (msg []byte, tooBig bool, err error) {
 	var buf bytes.Buffer
 	for {
