@@ -33,7 +33,7 @@ require (
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/mattn/go-sqlite3 v1.14.42 // indirect
+	github.com/mattn/go-sqlite3 v1.14.42
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
 	github.com/minio/minlz v1.0.1-0.20250507153514-87eb42fe8882 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
