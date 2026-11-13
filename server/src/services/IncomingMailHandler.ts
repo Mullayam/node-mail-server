@@ -19,10 +19,55 @@ import { mailWorkers } from "../lib/workers";
 import { RFC5322MailComposer } from "../server/config/MailComposer";
 import { getMailRuntime } from "../server/mta/runtime";
 import { DsnProcessor } from "./bounce/DsnProcessor";
+import { ImapDelivery, type ImapDeliveryResult } from "./ImapDelivery";
 import { IncomingPolicy } from "./IncomingPolicy";
 
 let pgpWarningShown = false;
 let arcWarningShown = false;
+
+/**
+ * Delivers to the IMAP server and decides the SMTP reply.
+ * Returns null to accept the message, or the error to reply with:
+ * - at least one mailbox got it: accept (other failures are logged)
+ * - IMAP unreachable or a temporary refusal: 450, so the sender retries
+ * - every recipient refused permanently: 552 (over quota) or 550 (no mailbox)
+ */
+async function storeInImap(
+	raw: Buffer,
+	sender: string,
+	recipients: string[],
+): Promise<Error | null> {
+	let result: ImapDeliveryResult;
+	try {
+		result = await ImapDelivery.deliver(raw, sender, recipients);
+	} catch (error) {
+		Logging.dev(
+			`IMAP delivery failed, asking the sender to retry: ${error}`,
+			"error",
+		);
+		return smtpReply("MAILBOX_BUSY", { recipient: recipients[0] }).toError();
+	}
+	for (const f of result.failed) {
+		Logging.dev(
+			`IMAP delivery to ${f.recipient} failed (${f.code}): ${f.message}`,
+			f.permanent ? "notice" : "error",
+		);
+	}
+	if (result.delivered.length) {
+		return null;
+	}
+	const temporary = result.failed.find((f) => !f.permanent);
+	if (temporary) {
+		return smtpReply("MAILBOX_BUSY", {
+			recipient: temporary.recipient,
+		}).toError();
+	}
+	const first = result.failed[0];
+	const recipient = first?.recipient || recipients[0];
+	return first?.code === 552
+		? smtpReply("MAILBOX_FULL", { recipient }).toError()
+		: smtpReply("USER_NOT_FOUND", { recipient }).toError();
+}
 
 class IncomingMailHandler {
 	async HandleMailFrom(
@@ -177,6 +222,18 @@ class IncomingMailHandler {
 					"notice",
 				);
 			}
+			// Store: hand the checked message to the IMAP server over LMTP, so it
+			// shows up in the recipients' mailboxes at once (when IMAP_LMTP_HOST is set).
+			const localRecipients = recipients.filter(
+				(r) => !bounceRecipients.includes(r),
+			);
+			if (ImapDelivery.enabled && localRecipients.length) {
+				const refused = await storeInImap(rawEmail, sender, localRecipients);
+				if (refused) {
+					return callback(refused);
+				}
+			}
+
 			/** NOTE :
 			 * CHECK FOR TXT RECORD i.e DKIM
 			 *  Check for DKIM signature
