@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"net/netip"
 	"os"
 	"sort"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"imap/internal/filing"
 	"imap/internal/quota"
 )
 
@@ -38,6 +40,31 @@ type TLS struct {
 
 // Enabled reports whether a certificate is configured.
 func (t TLS) Enabled() bool { return t.Cert != "" }
+
+// DefaultLMTPTrusted are the networks allowed to deliver over LMTP when
+// <lmtp trusted> is not set: loopback and the private ranges Docker uses.
+var DefaultLMTPTrusted = []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+
+// LMTP is set when <lmtp listen> is configured. The mail server delivers
+// incoming mail to it, and each message shows up in IMAP at once.
+type LMTP struct {
+	Listen  string         `json:"listen,omitempty"`
+	Trusted []netip.Prefix `json:"trusted,omitempty"`
+}
+
+// Enabled reports whether the LMTP listener is configured.
+func (l LMTP) Enabled() bool { return l.Listen != "" }
+
+// Allows reports whether a client address may deliver.
+func (l LMTP) Allows(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	for _, p := range l.Trusted {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
 
 // Plugin names a pluggable backend and passes every other attribute to it as
 // an option. <storage engine="postgres" dsn="..."/> gives Name "postgres" and
@@ -88,6 +115,10 @@ type file struct {
 			Key    string `xml:"key,attr"`
 			Listen string `xml:"listen,attr"`
 		} `xml:"tls"`
+		LMTP struct {
+			Listen  string `xml:"listen,attr"`
+			Trusted string `xml:"trusted,attr"`
+		} `xml:"lmtp"`
 	} `xml:"settings"`
 	Directory directoryElem `xml:"directory"`
 	Storage   storageElem   `xml:"storage"`
@@ -95,16 +126,28 @@ type file struct {
 		Storage  string `xml:"storage,attr"`
 		Messages string `xml:"messages,attr"`
 	} `xml:"quota"`
+	Delivery *struct {
+		SpamMailbox *string `xml:"spam-mailbox,attr"`
+		SpamHeaders string  `xml:"spam-headers,attr"`
+	} `xml:"delivery"`
 }
+
+// Default delivery rules, used when <delivery> is missing.
+var (
+	DefaultSpamMailbox = "Junk"
+	DefaultSpamHeaders = []string{"X-AE-Spam-Flag", "X-Spam-Flag"}
+)
 
 // Conf is a parsed and validated imap.xml.
 type Conf struct {
 	Listen    string
 	TLS       TLS
+	LMTP      LMTP
 	DataDir   string
 	Directory Plugin
 	Storage   Plugin
 	Quota     quota.Limit
+	Delivery  filing.Rules // where spam goes; applied live on reload
 	Warnings  []string
 }
 
@@ -145,12 +188,45 @@ func Parse(data []byte) (*Conf, error) {
 			problems = append(problems, fmt.Errorf("<tls listen>: %w", err))
 		}
 	}
+	if l := f.Settings.LMTP; strings.TrimSpace(l.Listen) != "" {
+		c.LMTP.Listen = strings.TrimSpace(l.Listen)
+		if err := checkListen(c.LMTP.Listen); err != nil {
+			problems = append(problems, fmt.Errorf("<lmtp listen>: %w", err))
+		}
+		cidrs := DefaultLMTPTrusted
+		if strings.TrimSpace(l.Trusted) != "" {
+			cidrs = strings.Split(l.Trusted, ",")
+		}
+		for _, s := range cidrs {
+			p, err := netip.ParsePrefix(strings.TrimSpace(s))
+			if err != nil {
+				problems = append(problems, fmt.Errorf("<lmtp trusted>: %q is not a CIDR range", strings.TrimSpace(s)))
+				continue
+			}
+			c.LMTP.Trusted = append(c.LMTP.Trusted, p.Masked())
+		}
+	}
 	if c.Directory.Name == "" {
 		problems = append(problems, errors.New(`<directory kind="..."> is missing`))
 	}
 	if c.Storage.Name == "" {
 		problems = append(problems, errors.New(`<storage engine="..."> is missing`))
 	}
+	c.Delivery = filing.Rules{SpamMailbox: DefaultSpamMailbox, SpamHeaders: DefaultSpamHeaders}
+	if d := f.Delivery; d != nil {
+		if d.SpamMailbox != nil {
+			c.Delivery.SpamMailbox = strings.TrimSpace(*d.SpamMailbox)
+		}
+		if strings.TrimSpace(d.SpamHeaders) != "" {
+			c.Delivery.SpamHeaders = nil
+			for _, h := range strings.Split(d.SpamHeaders, ",") {
+				if h = strings.TrimSpace(h); h != "" {
+					c.Delivery.SpamHeaders = append(c.Delivery.SpamHeaders, h)
+				}
+			}
+		}
+	}
+
 	var err error
 	if c.Quota.StorageBytes, err = quota.ParseSize(f.Quota.Storage); err != nil {
 		problems = append(problems, fmt.Errorf("<quota storage>: %w", err))
@@ -244,6 +320,7 @@ func (h *Holder) Reload() (*ReloadReport, error) {
 	}
 	restart("listen", old.Listen, next.Listen)
 	restart("tls listen", old.TLS.Listen, next.TLS.Listen)
+	restart("lmtp listen", old.LMTP.Listen, next.LMTP.Listen)
 	restart("data dir", old.DataDir, next.DataDir)
 	restart("directory kind", old.Directory.Name, next.Directory.Name)
 	restart("storage engine", old.Storage.Name, next.Storage.Name)
