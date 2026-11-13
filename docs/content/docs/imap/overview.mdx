@@ -72,7 +72,34 @@ The work is split the same way as in Postfix, Rspamd and Dovecot setups:
 
 `X-Spam-Flag` is the header SpamAssassin and Rspamd add, so a content scanner placed in front later works without changes here. `spam-mailbox="INBOX"` keeps spam in the inbox. The rules apply on reload.
 
-Folders named `Junk` or `Spam`, `Sent`, `Drafts`, `Trash` and `Archive` always get their standard attribute, whoever creates them.
+## Folders
+
+Every IMAP user gets these folders, created at login and again after every reload:
+
+| Folder | Attribute | What it is for |
+|--------|-----------|----------------|
+| INBOX | | Incoming mail. Always exists. |
+| Sent | `\Sent` | Mail the user sent. |
+| Drafts | `\Drafts` | Unfinished mail. |
+| Outbox | | Mail sent through the server that is still in the queue. See [Outbox and Sent](/docs/guides/sending-mail#outbox-and-sent). |
+| Archive | `\Archive` | Mail kept out of the inbox. |
+| Junk | `\Junk` | Spam. Delivery files tagged mail here. |
+| Trash | `\Trash` | Deleted mail. |
+| Starred | `\Flagged` | Every flagged message. |
+
+The attribute tells mail clients which folder plays which role, so Thunderbird, Apple Mail and phone apps use them without setup.
+
+**One folder per role.** `Spam` is the same as Junk, `Bin` and `Deleted Items` the same as Trash, and `Sent Items` or `Sent Mail` the same as Sent. A user who already has one of these keeps it, and no second folder is created. Spam is then filed into that folder.
+
+**Starred** holds every flagged message, like Gmail's Starred. Flagging a message anywhere adds it to Starred, and the message stays in its own folder too. Unflagging removes it. Copying or moving a message into Starred flags it, and deleting it from Starred unflags it. A message that is only in Starred moves to Archive when it is unflagged, so it is never lost.
+
+**Your own folders.** List them in `imap.xml`, nested with `/`:
+
+```xml
+<folders defaults="Sent,Drafts,Outbox,Archive,Junk,Trash,Starred,Receipts,Clients/Acme"/>
+```
+
+`defaults=""` creates no default folders. Users can create, rename and delete their own folders in their mail client as usual.
 
 ## Who can use IMAP
 
@@ -88,6 +115,7 @@ Each part is a separate package with a small interface, so you can replace any o
 |------|---------|--------------|
 | Gluon server | `main.go`, `core/` | Starts Gluon and loads the IMAP-enabled users. The connector (`core/connector/db.go`) implements all 16 methods of Gluon's `connector.Connector`, and a compile-time check fails the build if Gluon adds one. |
 | Delivery | `core/deliver.go`, `internal/lmtp`, `internal/filing` | The LMTP listener, the INBOX-or-Junk decision, and the push to Gluon. |
+| Folders | `core/connector/folders.go` | Default folders, one folder per role, Starred, and the Outbox-to-Sent move. |
 | Duplicates | `internal/dedupe` | The SQLite record of delivered Message-IDs that stops a retried message being stored twice. |
 | Config | `internal/conf` | Reads `imap.xml`: listeners, TLS, LMTP, data dir, users, storage, quota, delivery rules. |
 | Users | `internal/directorykind` | The user list. The `file` kind reads and writes `users.xml`. `postgres` is a placeholder. |
@@ -117,6 +145,7 @@ cp server/imap/conf/users.example.xml server/imap/conf/users.xml
     <lmtp listen="0.0.0.0:24" trusted="127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"/>
     <idle bulk="0s"/>
   </settings>
+  <folders defaults="Sent,Drafts,Outbox,Archive,Junk,Trash,Starred"/>
   <directory kind="file" source="/etc/imap/users.xml"/>
   <storage engine="pebble" path="/data/mail"/>
   <quota storage="1GB" messages="50000"/>

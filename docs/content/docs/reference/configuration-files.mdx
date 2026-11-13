@@ -77,6 +77,7 @@ The reverse DNS check runs when the client connects. The sender checks run at `M
 | `incoming.customHeaders` | on | `enabled` and `headers`. Extra headers added to incoming mail after the checks. |
 | `outgoing.dkimSign` | `true` | Sign outgoing mail with DKIM. Also needs `DKIM_PRIVATE_KEY`. |
 | `outgoing.bounceHeader` | on, `X-AE-Bounce-Address` | `enabled` and `name`. Adds the bounce address when `BOUNCE_DOMAIN` is set. |
+| `outgoing.imapOutbox.enabled` | `true` | Put mail sent on port 587 in the sender's Outbox, then move it to Sent. Also needs `IMAP_LMTP_HOST`. See [Outbox and Sent](/docs/guides/sending-mail#outbox-and-sent). |
 | `outgoing.customHeaders` | off | `enabled` and `headers`. Extra headers added to outgoing mail. |
 | `api.enabled` | `true` | The [JSON send API](/docs/guides/json-api). Also needs `MAIL_API_TOKEN`. |
 
