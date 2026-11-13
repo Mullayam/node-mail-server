@@ -28,6 +28,9 @@ func DefaultSocket() string {
 	return "/run/imap/control.sock"
 }
 
+// MaxRequestBytes is the largest request the server reads.
+const MaxRequestBytes = 50 << 20
+
 // Request is what imapctl sends.
 type Request struct {
 	Command string            `json:"command"`
@@ -85,10 +88,11 @@ func Serve(ctx context.Context, path string, dispatch DispatchFunc) error {
 
 func handle(ctx context.Context, c net.Conn, dispatch DispatchFunc) {
 	defer c.Close()
-	c.SetDeadline(time.Now().Add(30 * time.Second))
+	c.SetDeadline(time.Now().Add(60 * time.Second))
 
+	// Requests can carry a whole message (mail.deliver), so allow up to 50 MB.
 	var req Request
-	if err := json.NewDecoder(io.LimitReader(c, 64<<10)).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(c, MaxRequestBytes)).Decode(&req); err != nil {
 		send(c, Response{Error: "bad request: " + err.Error()})
 		return
 	}

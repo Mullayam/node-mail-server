@@ -10,6 +10,7 @@
 //	imapctl user delete <address>
 //	imapctl quota get <address>
 //	imapctl quota set <address> [-storage 2GB] [-messages N]
+//	imapctl mail deliver <address> [-mailbox NAME] < message.eml
 //
 // In Docker: docker compose -f deploy/docker-compose.yml exec imap imapctl reload
 package main
@@ -20,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -80,6 +82,10 @@ func usage() {
   quota get <address>
   quota set <address> [-storage 2GB] [-messages N]
 
+  mail deliver <address> [-mailbox NAME] [-file message.eml]
+                           store a message (from stdin; INBOX, or Junk when it is
+                           marked as spam) and show it to connected clients at once
+
 Use -password-stdin instead of -password to keep the password out of the process list.
 
 Docker: docker compose -f deploy/docker-compose.yml exec imap imapctl reload
@@ -94,7 +100,7 @@ func build(args []string) (control.Request, error) {
 	switch args[0] {
 	case "reload", "reloadxml", "status", "routes":
 		return control.Request{Command: args[0]}, nil
-	case "user", "quota":
+	case "user", "quota", "mail":
 		if len(args) < 2 {
 			return control.Request{}, fmt.Errorf("%s needs a subcommand", args[0])
 		}
@@ -119,14 +125,36 @@ func build(args []string) (control.Request, error) {
 		names = []string{"password", "imap", "quota-storage", "quota-messages"}
 	case "quota.set":
 		names = []string{"storage", "messages"}
+	case "mail.deliver":
+		names = []string{"mailbox"}
 	}
 	values := map[string]*string{}
 	for _, n := range names {
 		values[n] = fs.String(n, "", "")
 	}
 	passwordStdin := fs.Bool("password-stdin", false, "read the password from stdin")
+	file := fs.String("file", "", "mail deliver: read the message from this file instead of stdin")
 	if err := fs.Parse(args[3:]); err != nil {
 		return control.Request{}, err
+	}
+	if command == "mail.deliver" {
+		var src io.Reader = os.Stdin
+		if *file != "" {
+			f, err := os.Open(*file)
+			if err != nil {
+				return control.Request{}, err
+			}
+			defer f.Close()
+			src = f
+		}
+		msg, err := io.ReadAll(io.LimitReader(src, control.MaxRequestBytes))
+		if err != nil {
+			return control.Request{}, fmt.Errorf("read message: %w", err)
+		}
+		if len(msg) == 0 {
+			return control.Request{}, errors.New("mail deliver: no message on stdin (or use -file)")
+		}
+		reqArgs["message"] = string(msg)
 	}
 	fs.Visit(func(f *flag.Flag) {
 		if v, ok := values[f.Name]; ok {

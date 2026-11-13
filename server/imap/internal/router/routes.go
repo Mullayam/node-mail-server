@@ -24,12 +24,19 @@ type CertReloader interface {
 	NotAfter() time.Time
 }
 
+// Deliverer stores a message for a user and pushes it to Gluon's update
+// stream, so connected IMAP clients see it at once. core/factory implements it.
+type Deliverer interface {
+	Deliver(ctx context.Context, address, mailbox string, literal []byte) (string, error)
+}
+
 // Deps is what the admin commands work on.
 type Deps struct {
 	Conf      *conf.Holder
 	Directory directorykind.Directory
 	Quota     *quota.Manager
 	Gluon     Syncer
+	Mail      Deliverer    // nil disables mail.deliver
 	TLS       CertReloader // nil when TLS is not configured
 	Version   string
 	Started   time.Time
@@ -54,6 +61,37 @@ func RegisterAdmin(r *Router, d Deps) {
 
 	r.Handle("quota.get", "quota get <address>", "show a user's limit and usage", d.quotaGet)
 	r.Handle("quota.set", "quota set <address> [-storage S] [-messages N]", "set a user's own limit", d.quotaSet)
+
+	r.Handle("mail.deliver", "mail deliver <address> [-mailbox NAME] < message.eml",
+		"store a message (INBOX, or Junk when marked as spam) and show it to connected IMAP clients", d.mailDeliver)
+}
+
+// ---- mail ----
+
+func (d Deps) mailDeliver(ctx context.Context, a Args) (any, error) {
+	if d.Mail == nil {
+		return nil, errors.New("mail delivery is not available")
+	}
+	addr, err := a.Require("address")
+	if err != nil {
+		return nil, err
+	}
+	msg := a["message"]
+	if msg == "" {
+		return nil, errors.New("missing argument \"message\" (the raw RFC 5322 message)")
+	}
+	// No mailbox given: filed like LMTP mail (INBOX, or Junk when a spam header says so).
+	mailbox := a["mailbox"]
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	id, err := d.Mail.Deliver(ctx, addr, mailbox, []byte(msg))
+	if err != nil {
+		return nil, err
+	}
+	if mailbox == "" {
+		mailbox = "auto"
+	}
+	return map[string]any{"address": directorykind.Normalize(addr), "mailbox": mailbox, "message_id": id, "bytes": len(msg)}, nil
 }
 
 // ---- status and reload ----

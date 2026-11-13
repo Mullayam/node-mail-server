@@ -74,17 +74,76 @@ func TestReloadAliasPicksUpUserChanges(t *testing.T) {
 }
 
 func TestUserWritesReachTheDirectory(t *testing.T) {
-	r, sync, _ := setup(t)
-	_, err := r.Dispatch(context.Background(), "user.add", Args{"address": "z@a.com", "password": "p", "imap": "true"})
-	if !errors.Is(err, directorykind.ErrNotImplemented) {
-		t.Errorf("user.add on the file kind: %v, want ErrNotImplemented", err)
+	r, sync, users := setup(t)
+	ctx := context.Background()
+	if _, err := r.Dispatch(ctx, "user.add", Args{"address": "z@a.com", "password": "p", "imap": "true", "quota-storage": "5MB"}); err != nil {
+		t.Fatalf("user.add: %v", err)
 	}
-	if sync.calls != 0 {
+	if sync.calls != 1 {
+		t.Errorf("Gluon sync calls = %d, want 1 after an add", sync.calls)
+	}
+	if data, _ := os.ReadFile(users); !strings.Contains(string(data), `id="z"`) {
+		t.Errorf("users.xml not written:\n%s", data)
+	}
+
+	// A refused change must not touch Gluon.
+	if _, err := r.Dispatch(ctx, "user.add", Args{"address": "z@a.com", "password": "p"}); !errors.Is(err, directorykind.ErrExists) {
+		t.Errorf("duplicate add: %v", err)
+	}
+	if sync.calls != 1 {
 		t.Error("Gluon must not be synced when the directory refused the change")
 	}
-	if _, err := r.Dispatch(context.Background(), "user.add", Args{"address": "z@a.com"}); err == nil || !strings.Contains(err.Error(), "password") {
+	if _, err := r.Dispatch(ctx, "user.add", Args{"address": "y2@a.com"}); err == nil || !strings.Contains(err.Error(), "password") {
 		t.Errorf("missing password: %v", err)
 	}
+
+	if _, err := r.Dispatch(ctx, "user.update", Args{"address": "z@a.com", "imap": "false"}); err != nil {
+		t.Fatalf("user.update: %v", err)
+	}
+	if _, err := r.Dispatch(ctx, "quota.set", Args{"address": "z@a.com", "messages": "10"}); err != nil {
+		t.Fatalf("quota.set: %v", err)
+	}
+	if _, err := r.Dispatch(ctx, "user.delete", Args{"address": "z@a.com"}); err != nil {
+		t.Fatalf("user.delete: %v", err)
+	}
+}
+
+type fakeMail struct{ got string }
+
+func (f *fakeMail) Deliver(_ context.Context, addr, mbox string, msg []byte) (string, error) {
+	f.got = addr + " " + mbox + " " + string(msg)
+	return "id-1", nil
+}
+
+func TestMailDeliver(t *testing.T) {
+	r, _, _ := setup(t)
+	ctx := context.Background()
+	if _, err := r.Dispatch(ctx, "mail.deliver", Args{"address": "x@a.com", "message": "Subject: hi\r\n\r\nbody"}); err == nil {
+		t.Error("mail.deliver without a deliverer should fail")
+	}
+
+	m := &fakeMail{}
+	r2 := New()
+	holder, _ := conf.NewHolder(writeConf(t))
+	RegisterAdmin(r2, Deps{Conf: holder, Mail: m})
+	got, err := r2.Dispatch(ctx, "mail.deliver", Args{"address": "X@A.com", "message": "Subject: hi\r\n\r\nbody"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No -mailbox: the deliverer files it (an empty mailbox means "decide").
+	if m.got != "X@A.com  Subject: hi\r\n\r\nbody" || got.(map[string]any)["message_id"] != "id-1" {
+		t.Errorf("deliver got %q, result %v", m.got, got)
+	}
+	if _, err := r2.Dispatch(ctx, "mail.deliver", Args{"address": "x@a.com"}); err == nil {
+		t.Error("missing message should fail")
+	}
+}
+
+func writeConf(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "imap.xml")
+	os.WriteFile(p, []byte(`<imap><directory kind="file" source="u.xml"/><storage engine="dir" path="/m"/></imap>`), 0o600)
+	return p
 }
 
 func TestQuotaGetShowsDefaultAndUnknownUsage(t *testing.T) {
