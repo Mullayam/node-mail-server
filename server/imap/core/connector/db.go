@@ -223,13 +223,7 @@ func (c *MyDBConnector) CreateMailbox(ctx context.Context, cache connector.IMAPS
 	if err != nil {
 		return imap.Mailbox{}, err
 	}
-	return imap.Mailbox{
-		ID:             imap.MailboxID(id),
-		Name:           name,
-		Flags:          defaultFlags,
-		PermanentFlags: defaultPermFlags,
-		Attributes:     defaultAttrs,
-	}, nil
+	return gluonMailbox(storage.Mailbox{ID: id, Name: name}), nil
 }
 
 // GetMessageLiteral is intended to be used by Gluon when, for some reason, the local cached data no longer exists.
