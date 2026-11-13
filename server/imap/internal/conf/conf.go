@@ -115,7 +115,12 @@ type file struct {
 		SpamMailbox *string `xml:"spam-mailbox,attr"`
 		SpamHeaders string  `xml:"spam-headers,attr"`
 	} `xml:"delivery"`
+	Folders *struct {
+		Defaults string `xml:"defaults,attr"`
+	} `xml:"folders"`
 }
+
+var DefaultFolders = []string{"Sent", "Drafts", "Outbox", "Archive", "Junk", "Trash", "Starred"}
 
 var (
 	DefaultSpamMailbox = "Junk"
@@ -132,6 +137,7 @@ type Conf struct {
 	Storage   Plugin
 	Quota     quota.Limit
 	Delivery  filing.Rules
+	Folders   []string
 	Warnings  []string
 }
 
@@ -186,6 +192,21 @@ func Parse(data []byte) (*Conf, error) {
 				continue
 			}
 			c.LMTP.Trusted = append(c.LMTP.Trusted, p.Masked())
+		}
+	}
+	c.Folders = DefaultFolders
+	if f.Folders != nil {
+		c.Folders = nil
+		for _, name := range strings.Split(f.Folders.Defaults, ",") {
+			name = strings.TrimSpace(name)
+			switch {
+			case name == "":
+			case strings.EqualFold(name, "INBOX"):
+			case strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") || strings.Contains(name, "//"):
+				problems = append(problems, fmt.Errorf("<folders defaults>: %q is not a folder name", name))
+			default:
+				c.Folders = append(c.Folders, name)
+			}
 		}
 	}
 	if b := strings.TrimSpace(f.Settings.Idle.Bulk); b != "" {

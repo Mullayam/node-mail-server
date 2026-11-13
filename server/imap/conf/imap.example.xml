@@ -37,6 +37,17 @@
   </settings>
 
   <!--
+    Folders every IMAP user gets, created at login and after a reload.
+    Sent, Drafts, Archive, Junk and Trash carry their standard special-use
+    attribute, so mail clients use them for those roles. A user who already
+    has "Spam", "Bin" or "Sent Items" keeps them instead of a second folder.
+    Starred shows every flagged message. Outbox holds mail the user sent
+    through the server until it has left the queue, then it moves to Sent.
+    Add your own, for example "Receipts" or "Clients/Acme". INBOX always exists.
+  -->
+  <folders defaults="Sent,Drafts,Outbox,Archive,Junk,Trash,Starred"/>
+
+  <!--
     Who the users are. kind="file" reads users.xml; kind="postgres" is a
     placeholder. Every other attribute is passed to the kind as an option.
   -->

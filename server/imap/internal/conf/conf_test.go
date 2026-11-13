@@ -46,6 +46,35 @@ func TestParseReportsEveryProblem(t *testing.T) {
 	}
 }
 
+func TestFolders(t *testing.T) {
+	base := `<directory kind="file"/><storage engine="pebble"/>`
+	c, err := Parse([]byte(`<imap>` + base + `</imap>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(c.Folders, ",") != "Sent,Drafts,Outbox,Archive,Junk,Trash,Starred" {
+		t.Errorf("default folders = %v", c.Folders)
+	}
+
+	c, err = Parse([]byte(`<imap>` + base + `<folders defaults=" Sent, INBOX ,Clients/Acme,, Receipts "/></imap>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(c.Folders, ",") != "Sent,Clients/Acme,Receipts" {
+		t.Errorf("custom folders = %v (INBOX always exists and is skipped)", c.Folders)
+	}
+
+	c, err = Parse([]byte(`<imap>` + base + `<folders defaults=""/></imap>`))
+	if err != nil || len(c.Folders) != 0 {
+		t.Errorf("an empty list turns default folders off: %v %v", c.Folders, err)
+	}
+
+	_, err = Parse([]byte(`<imap>` + base + `<folders defaults="Sent,/bad"/></imap>`))
+	if err == nil || !strings.Contains(err.Error(), "folders defaults") {
+		t.Errorf("bad folder name: %v", err)
+	}
+}
+
 func TestIdleBulk(t *testing.T) {
 	c, err := Parse([]byte(`<imap><settings></settings><directory kind="file"/><storage engine="pebble"/></imap>`))
 	if err != nil {
