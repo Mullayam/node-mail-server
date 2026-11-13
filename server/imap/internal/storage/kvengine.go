@@ -16,10 +16,6 @@ import (
 	"imap/internal/storage/kv"
 )
 
-// The KV engine implements every Engine method on a kv.Store. Mail is kept
-// on disk only; Gluon keeps its own cache for fast reads.
-//
-//	<storage engine="pebble" path="/data/mail"/>
 func init() {
 	Register("pebble", func(opts map[string]string) (Engine, error) {
 		if opts["path"] == "" {
@@ -33,24 +29,11 @@ func init() {
 	})
 }
 
-// KVEngine stores mail in a kv.Store with this key layout (parts are joined
-// by kv.Key):
-//
-//	acct <a> mbox  <mailbox>          Mailbox (JSON)
-//	acct <a> msg   <message>          Message metadata (JSON)
-//	acct <a> body  <message>          raw message
-//	acct <a> in    <mailbox> <message> membership, mailbox -> messages
-//	acct <a> msgin <message> <mailbox> membership, message -> mailboxes
-//	acct <a> usage                    quota.Usage (JSON)
-//
-// A message can be in several mailboxes. When it leaves the last one, its
-// body and metadata are deleted and the usage goes down.
 type KVEngine struct {
 	db kv.Store
-	mu sync.Mutex // serialises read-modify-write sequences
+	mu sync.Mutex
 }
 
-// NewKVEngine builds the engine on any kv.Store.
 func NewKVEngine(db kv.Store) *KVEngine { return &KVEngine{db: db} }
 
 func kMailbox(a, id string) []byte   { return kv.Key("acct", a, "mbox", id) }
@@ -67,8 +50,6 @@ func newID() string {
 	rand.Read(b)
 	return hex.EncodeToString(b)
 }
-
-// ---- reads ----
 
 func (e *KVEngine) ListMailboxes(_ context.Context, a string) ([]Mailbox, error) {
 	var out []Mailbox
@@ -118,8 +99,6 @@ func (e *KVEngine) Usage(_ context.Context, a string) (quota.Usage, error) {
 	return u, err
 }
 
-// ---- mailboxes ----
-
 func (e *KVEngine) CreateMailbox(_ context.Context, a string, name []string) (string, error) {
 	id := newID()
 	return id, kv.SetJSON(e.db, kMailbox(a, id), Mailbox{ID: id, Name: name})
@@ -136,8 +115,6 @@ func (e *KVEngine) RenameMailbox(_ context.Context, a, id string, newName []stri
 	return kv.SetJSON(e.db, kMailbox(a, id), m)
 }
 
-// DeleteMailbox removes the mailbox and its memberships. Messages that are in
-// no other mailbox are deleted.
 func (e *KVEngine) DeleteMailbox(_ context.Context, a, id string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -160,9 +137,6 @@ func (e *KVEngine) DeleteMailbox(_ context.Context, a, id string) error {
 	})
 }
 
-// ---- messages ----
-
-// CreateMessage stores a message in a mailbox and adds it to the usage.
 func (e *KVEngine) CreateMessage(_ context.Context, a, mailboxID string, literal []byte, flags []string, date time.Time) (string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -188,7 +162,6 @@ func (e *KVEngine) CreateMessage(_ context.Context, a, mailboxID string, literal
 	})
 }
 
-// AddToMailbox puts existing messages into another mailbox as well.
 func (e *KVEngine) AddToMailbox(_ context.Context, a string, ids []string, mailboxID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -198,8 +171,6 @@ func (e *KVEngine) AddToMailbox(_ context.Context, a string, ids []string, mailb
 	return e.db.Batch(func(b kv.Batch) error { return e.join(b, a, ids, mailboxID) })
 }
 
-// RemoveFromMailbox takes messages out of a mailbox. Messages that are then
-// in no mailbox are deleted.
 func (e *KVEngine) RemoveFromMailbox(_ context.Context, a string, ids []string, mailboxID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -209,7 +180,6 @@ func (e *KVEngine) RemoveFromMailbox(_ context.Context, a string, ids []string, 
 	return e.db.Batch(func(b kv.Batch) error { return e.leave(b, a, ids, mailboxID) })
 }
 
-// MoveMessages moves messages between mailboxes in one atomic write.
 func (e *KVEngine) MoveMessages(_ context.Context, a string, ids []string, fromID, toID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -232,7 +202,6 @@ func (e *KVEngine) MoveMessages(_ context.Context, a string, ids []string, fromI
 	})
 }
 
-// SetFlag turns one flag on or off for the given messages.
 func (e *KVEngine) SetFlag(_ context.Context, a string, ids []string, flag string, on bool) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -259,8 +228,6 @@ func (e *KVEngine) SetFlag(_ context.Context, a string, ids []string, flag strin
 }
 
 func (e *KVEngine) Close() error { return e.db.Close() }
-
-// ---- shared helpers ----
 
 func (e *KVEngine) mailbox(a, id string) (Mailbox, error) {
 	m, err := kv.GetJSON[Mailbox](e.db, kMailbox(a, id))
@@ -295,7 +262,6 @@ func (e *KVEngine) messagesAndMailboxExist(a string, ids []string, mailboxID str
 	return nil
 }
 
-// join adds memberships in both directions.
 func (e *KVEngine) join(b kv.Batch, a string, ids []string, mailboxID string) error {
 	for _, id := range ids {
 		if err := errors.Join(b.Set(kIn(a, mailboxID, id), nil), b.Set(kMsgIn(a, id, mailboxID), nil)); err != nil {
@@ -305,7 +271,6 @@ func (e *KVEngine) join(b kv.Batch, a string, ids []string, mailboxID string) er
 	return nil
 }
 
-// leave removes memberships and deletes messages left in no mailbox.
 func (e *KVEngine) leave(b kv.Batch, a string, ids []string, mailboxID string) error {
 	u, err := e.Usage(context.Background(), a)
 	if err != nil {

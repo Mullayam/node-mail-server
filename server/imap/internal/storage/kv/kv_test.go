@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// Every driver must pass the same suite. Add new drivers here.
 func drivers(t *testing.T) map[string]Store {
 	t.Helper()
 	p, err := OpenPebble(t.TempDir())
@@ -29,7 +28,6 @@ func TestStore(t *testing.T) {
 				t.Fatalf("get = %q", v)
 			}
 
-			// Prefix scans see only their own children, in order.
 			s.Set(Key("a", "2"), []byte("two"))
 			s.Set(Key("ab", "x"), []byte("other prefix"))
 			keys, _ := Keys(s, Prefix("a"))
@@ -37,7 +35,6 @@ func TestStore(t *testing.T) {
 				t.Fatalf("scan = %q", keys)
 			}
 
-			// A failed batch writes nothing.
 			boom := errors.New("boom")
 			err := s.Batch(func(b Batch) error {
 				b.Set(Key("a", "3"), []byte("three"))
@@ -50,7 +47,6 @@ func TestStore(t *testing.T) {
 				t.Fatal("failed batch was applied")
 			}
 
-			// JSON helpers and prefix delete.
 			type rec struct{ N int }
 			if err := SetJSON(s, Key("j"), rec{N: 7}); err != nil {
 				t.Fatal(err)

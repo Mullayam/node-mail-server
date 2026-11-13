@@ -1,18 +1,3 @@
-// Package storage is the upper layer for where mail is kept.
-//
-// The Gluon connector (core/connector) calls an Engine for every mailbox and
-// message operation. Engines are pluggable: imap.xml picks one with
-// <storage engine="...">, and any extra attributes are passed as options.
-// Built in:
-//
-//	pebble    the KV engine on Pebble, on disk (path="..."). Fully implemented.
-//	dir       placeholder: one folder per account on disk (path="...")
-//	postgres  placeholder: a Postgres database (dsn="...")
-//
-// The placeholders return ErrNotImplemented from every method. To add your
-// own engine, either give the KV engine a new kv.Store driver, or embed
-// Unimplemented, override the methods you support and call Register from an
-// init function.
 package storage
 
 import (
@@ -28,19 +13,16 @@ import (
 )
 
 var (
-	// ErrNotImplemented is returned by Unimplemented and the placeholder engines.
 	ErrNotImplemented  = errors.New("not implemented by this storage engine")
 	ErrMailboxNotFound = errors.New("mailbox not found")
 	ErrMessageNotFound = errors.New("message not found")
 )
 
-// Mailbox is one folder of an account.
 type Mailbox struct {
 	ID   string   `json:"id"`
-	Name []string `json:"name"` // path parts, for example ["Archive", "2026"]
+	Name []string `json:"name"`
 }
 
-// Message is a message's metadata. The body is read with GetMessage.
 type Message struct {
 	ID    string    `json:"id"`
 	Size  int64     `json:"size"`
@@ -48,8 +30,6 @@ type Message struct {
 	Date  time.Time `json:"date"`
 }
 
-// Engine stores mailboxes and messages for every account. IDs are opaque
-// strings chosen by the engine.
 type Engine interface {
 	ListMailboxes(ctx context.Context, account string) ([]Mailbox, error)
 	ListMessages(ctx context.Context, account, mailboxID string) ([]Message, error)
@@ -65,12 +45,10 @@ type Engine interface {
 	MoveMessages(ctx context.Context, account string, messageIDs []string, fromID, toID string) error
 	SetFlag(ctx context.Context, account string, messageIDs []string, flag string, on bool) error
 
-	// Usage feeds the quota check.
 	Usage(ctx context.Context, account string) (quota.Usage, error)
 	Close() error
 }
 
-// Factory builds an Engine from the options in imap.xml.
 type Factory func(options map[string]string) (Engine, error)
 
 var (
@@ -78,14 +56,12 @@ var (
 	engines = map[string]Factory{}
 )
 
-// Register makes an engine available to imap.xml. Call it from an init function.
 func Register(name string, f Factory) {
 	mu.Lock()
 	defer mu.Unlock()
 	engines[name] = f
 }
 
-// Open builds the named engine.
 func Open(name string, options map[string]string) (Engine, error) {
 	mu.RLock()
 	f, ok := engines[name]
@@ -96,7 +72,6 @@ func Open(name string, options map[string]string) (Engine, error) {
 	return f(options)
 }
 
-// Engines lists the registered engines.
 func Engines() []string {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -108,8 +83,6 @@ func Engines() []string {
 	return out
 }
 
-// Unimplemented returns ErrNotImplemented from every method. Embed it in your
-// engine and override the methods you support.
 type Unimplemented struct{ Engine string }
 
 func (u Unimplemented) err(op string) error {

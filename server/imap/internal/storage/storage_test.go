@@ -27,7 +27,6 @@ func TestPlaceholderEngines(t *testing.T) {
 	}
 }
 
-// A custom engine only overrides what it supports.
 type memEngine struct{ Unimplemented }
 
 func (memEngine) CreateMailbox(context.Context, string, []string) (string, error) {

@@ -26,7 +26,6 @@ func TestKVEngineLifecycle(t *testing.T) {
 				t.Fatalf("mailboxes = %+v", boxes)
 			}
 
-			// Store two messages; usage counts both.
 			m1, err := e.CreateMessage(ctx, a, inbox, []byte("hello"), []string{`\Seen`}, time.Now())
 			if err != nil {
 				t.Fatal(err)
@@ -39,7 +38,6 @@ func TestKVEngineLifecycle(t *testing.T) {
 				t.Fatalf("body = %q", body)
 			}
 
-			// m1 in two mailboxes: removing it from one keeps it.
 			if err := e.AddToMailbox(ctx, a, []string{m1}, archive); err != nil {
 				t.Fatal(err)
 			}
@@ -50,7 +48,6 @@ func TestKVEngineLifecycle(t *testing.T) {
 				t.Fatalf("m1 should survive while it is in Archive: %v", err)
 			}
 
-			// Move m2 to Archive, then flag it.
 			if err := e.MoveMessages(ctx, a, []string{m2}, inbox, archive); err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +65,6 @@ func TestKVEngineLifecycle(t *testing.T) {
 				}
 			}
 
-			// Deleting Archive deletes both messages (no other mailbox holds them).
 			if err := e.DeleteMailbox(ctx, a, archive); err != nil {
 				t.Fatal(err)
 			}
@@ -79,7 +75,6 @@ func TestKVEngineLifecycle(t *testing.T) {
 				t.Fatalf("usage after delete = %+v", u)
 			}
 
-			// Other accounts are separate.
 			if boxes, _ := e.ListMailboxes(ctx, "other@example.com"); len(boxes) != 0 {
 				t.Fatalf("other account sees %+v", boxes)
 			}

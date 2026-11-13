@@ -7,11 +7,8 @@ import (
 	"github.com/cockroachdb/pebble/v2"
 )
 
-// Pebble stores keys on disk with CockroachDB's Pebble engine. Every write
-// is synced to disk before it returns, so accepted mail survives a crash.
 type Pebble struct{ db *pebble.DB }
 
-// OpenPebble opens (or creates) a Pebble database in dir.
 func OpenPebble(dir string) (*Pebble, error) {
 	db, err := pebble.Open(dir, &pebble.Options{})
 	if err != nil {
