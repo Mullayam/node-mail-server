@@ -50,6 +50,7 @@ func (cf *ConnectorFactory) SyncUsers(ctx context.Context) (SyncReport, error) {
 			continue
 		}
 		delete(cf.userConnectors, email)
+		delete(cf.connectors, email)
 		r.Removed = append(r.Removed, email)
 	}
 

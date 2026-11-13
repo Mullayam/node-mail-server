@@ -6,12 +6,14 @@ import (
 	"log"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/ProtonMail/gluon"
 
 	"imap/core/connector"
 	"imap/core/consts"
 	"imap/internal/directorykind"
+	"imap/internal/filing"
 	"imap/internal/quota"
 	"imap/internal/storage"
 )
@@ -21,8 +23,10 @@ type ConnectorFactory struct {
 	dir            directorykind.Directory // the users (SMTP users + IMAP flag)
 	engine         storage.Engine          // where the mail lives
 	quota          *quota.Manager
-	ids            *idStore          // email -> Gluon user ID, kept across restarts
-	userConnectors map[string]string // email -> gluonUserID, users loaded right now
+	ids            *idStore                            // email -> Gluon user ID, kept across restarts
+	userConnectors map[string]string                   // email -> gluonUserID, users loaded right now
+	connectors     map[string]*connector.MyDBConnector // email -> its connector, for Deliver
+	rules          func() filing.Rules                 // where Deliver files spam
 	mu             sync.Mutex
 }
 
@@ -38,6 +42,7 @@ func NewConnectorFactory(server *gluon.Server, dir directorykind.Directory, engi
 		quota:          q,
 		ids:            ids,
 		userConnectors: make(map[string]string),
+		connectors:     make(map[string]*connector.MyDBConnector),
 	}
 
 	return cf, nil
@@ -85,7 +90,13 @@ func (cf *ConnectorFactory) GetOrCreateUser(ctx context.Context, email string, g
 	}
 
 	cf.userConnectors[email] = gluonUserID
-	if err := userConnector.Sync(ctx, fresh); err != nil {
+	cf.connectors[email] = userConnector
+
+	// Sync waits for Gluon to apply each update; do not let a stuck Gluon
+	// hang start-up or a reload.
+	syncCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := userConnector.Sync(syncCtx, fresh); err != nil {
 		log.Printf("❌ Failed to sync user %s: %v", email, err)
 		return "", fmt.Errorf("failed to sync user %s: %w", email, err)
 	}
