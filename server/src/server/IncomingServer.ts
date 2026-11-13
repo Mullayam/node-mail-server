@@ -7,6 +7,7 @@ import { toSmtpError } from "../lib/helpers/smtpErrors";
 import { Logging } from "../lib/logs";
 import { NewMailHandler } from "../services/IncomingMailHandler";
 import { IncomingPolicy } from "../services/IncomingPolicy";
+import { IpBlocklist } from "../services/IpBlocklist";
 import { SpamFilteration } from "./config/SpamFilteration";
 
 export class IncomingServerConfig {
@@ -46,6 +47,10 @@ export class IncomingServerConfig {
 			async onConnect(session, callback) {
 				try {
 					Logging.dev("Client Connected " + session.id);
+					if (!IncomingPolicy.isTrusted(session)) {
+						const blocked = IpBlocklist.rejection(session.remoteAddress);
+						if (blocked) return callback(blocked);
+					}
 					return callback(await IncomingPolicy.checkConnection(session));
 				} catch (error) {
 					return callback(
@@ -59,11 +64,23 @@ export class IncomingServerConfig {
 					Logging.dev("Mail Recived From " + address.address);
 
 					const { rateLimit } = mailConfig.get().incoming;
-					if (rateLimit.enabled && !IncomingPolicy.isTrusted(session)) {
-						await SpamFilteration.checkBlackListIp(
-							session.remoteAddress,
-							rateLimit.maxMessagesPerMinute,
-						);
+					if (!IncomingPolicy.isTrusted(session)) {
+						if (IpBlocklist.enabled()) {
+							const blocked =
+								IpBlocklist.rejection(session.remoteAddress) ??
+								(rateLimit.enabled
+									? IpBlocklist.countMessage(
+											session.remoteAddress,
+											rateLimit.maxMessagesPerMinute,
+										)
+									: undefined);
+							if (blocked) return callback(blocked);
+						} else if (rateLimit.enabled) {
+							await SpamFilteration.checkBlackListIp(
+								session.remoteAddress,
+								rateLimit.maxMessagesPerMinute,
+							);
+						}
 					}
 					return NewMailHandler.HandleMailFrom(address, session, callback);
 				} catch (error) {
