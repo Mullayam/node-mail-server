@@ -153,7 +153,6 @@ export const env = {
 		token: optional("MAIL_API_TOKEN"),
 	},
 	imap: {
-		// Unset: incoming mail is not stored. Set to the IMAP server (for example "imap").
 		lmtpHost: optional("IMAP_LMTP_HOST"),
 		lmtpPort: number("IMAP_LMTP_PORT", DEFAULTS.IMAP_LMTP_PORT),
 		timeoutMs: number("IMAP_LMTP_TIMEOUT_MS", DEFAULTS.IMAP_LMTP_TIMEOUT_MS),

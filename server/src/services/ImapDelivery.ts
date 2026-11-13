@@ -1,20 +1,9 @@
 import SMTPConnection from "nodemailer/lib/smtp-connection";
 import { env } from "../config/env";
 
-/**
- * Hands accepted incoming mail to the IMAP server over LMTP (RFC 2033).
- *
- * The IMAP server stores the message (Pebble) and pushes it to Gluon, so it
- * shows up in connected mail clients at once. LMTP answers once per
- * recipient, so each recipient gets its own result.
- *
- * Off unless IMAP_LMTP_HOST is set.
- */
-
 export interface ImapDeliveryFailure {
 	recipient: string;
 	code: number;
-	/** true for 5xx (do not retry), false for 4xx (try again later) */
 	permanent: boolean;
 	message: string;
 }
@@ -25,6 +14,8 @@ export interface ImapDeliveryResult {
 }
 
 type RejectedError = Error & { recipient?: string; responseCode?: number };
+
+type WithRejections = { rejectedErrors?: RejectedError[] };
 
 function toFailures(
 	errors: RejectedError[] | undefined,
@@ -45,11 +36,6 @@ export class ImapDelivery {
 		return Boolean(env.imap.lmtpHost);
 	}
 
-	/**
-	 * Delivers one message to several local recipients.
-	 * Rejects only when the IMAP server cannot be reached at all; per-recipient
-	 * refusals come back in `failed`.
-	 */
 	static deliver(
 		raw: Buffer,
 		sender: string,
@@ -80,26 +66,16 @@ export class ImapDelivery {
 			conn.connect(() => {
 				conn.send({ from: sender, to: recipients }, raw, (err, info) => {
 					if (err) {
-						const e = err as RejectedError & {
-							rejectedErrors?: RejectedError[];
-						};
-						if (e.rejectedErrors?.length) {
-							// Every recipient was refused at RCPT TO.
-							return finish(() =>
-								resolve({
-									delivered: [],
-									failed: toFailures(e.rejectedErrors),
-								}),
-							);
+						const failed = toFailures((err as WithRejections).rejectedErrors);
+						if (failed.length) {
+							return finish(() => resolve({ delivered: [], failed }));
 						}
 						return finish(() => reject(err));
 					}
 					finish(() =>
 						resolve({
 							delivered: (info.accepted ?? []).map(String),
-							failed: toFailures(
-								(info as { rejectedErrors?: RejectedError[] }).rejectedErrors,
-							),
+							failed: toFailures((info as WithRejections).rejectedErrors),
 						}),
 					);
 				});

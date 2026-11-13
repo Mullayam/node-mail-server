@@ -25,13 +25,6 @@ import { IncomingPolicy } from "./IncomingPolicy";
 let pgpWarningShown = false;
 let arcWarningShown = false;
 
-/**
- * Delivers to the IMAP server and decides the SMTP reply.
- * Returns null to accept the message, or the error to reply with:
- * - at least one mailbox got it: accept (other failures are logged)
- * - IMAP unreachable or a temporary refusal: 450, so the sender retries
- * - every recipient refused permanently: 552 (over quota) or 550 (no mailbox)
- */
 async function storeInImap(
 	raw: Buffer,
 	sender: string,
@@ -53,14 +46,14 @@ async function storeInImap(
 			f.permanent ? "notice" : "error",
 		);
 	}
-	if (result.delivered.length) {
-		return null;
-	}
 	const temporary = result.failed.find((f) => !f.permanent);
 	if (temporary) {
 		return smtpReply("MAILBOX_BUSY", {
 			recipient: temporary.recipient,
 		}).toError();
+	}
+	if (result.delivered.length) {
+		return null;
 	}
 	const first = result.failed[0];
 	const recipient = first?.recipient || recipients[0];
@@ -222,8 +215,6 @@ class IncomingMailHandler {
 					"notice",
 				);
 			}
-			// Store: hand the checked message to the IMAP server over LMTP, so it
-			// shows up in the recipients' mailboxes at once (when IMAP_LMTP_HOST is set).
 			const localRecipients = recipients.filter(
 				(r) => !bounceRecipients.includes(r),
 			);
