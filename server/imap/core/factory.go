@@ -28,6 +28,7 @@ type ConnectorFactory struct {
 	userConnectors map[string]string // email -> gluonUserID
 	connectors     map[string]*connector.MyDBConnector
 	rules          func() filing.Rules
+	folders        func() []string
 	seen           *dedupe.Store
 	mu             sync.Mutex
 }
@@ -59,6 +60,21 @@ func NewConnectorFactory(server *gluon.Server, dir directorykind.Directory, engi
 
 func (cf *ConnectorFactory) Close() error {
 	return cf.seen.Close()
+}
+
+func (cf *ConnectorFactory) SetFolders(fn func() []string) {
+	cf.mu.Lock()
+	defer cf.mu.Unlock()
+	cf.folders = fn
+}
+
+func (cf *ConnectorFactory) ensureDefaults(ctx context.Context, conn *connector.MyDBConnector) {
+	if cf.folders == nil {
+		return
+	}
+	if err := conn.EnsureDefaults(ctx, cf.folders()); err != nil {
+		log.Printf("❌ %v", err)
+	}
 }
 
 func (cf *ConnectorFactory) forget(ctx context.Context, account string, messageIDs []string) {
@@ -117,6 +133,7 @@ func (cf *ConnectorFactory) GetOrCreateUser(ctx context.Context, email string, g
 		log.Printf("❌ Failed to sync user %s: %v", email, err)
 		return "", fmt.Errorf("failed to sync user %s: %w", email, err)
 	}
+	cf.ensureDefaults(syncCtx, userConnector)
 	log.Printf("→ IMAP user ready: %s (Gluon ID: %s)", email, gluonUserID)
 	return gluonUserID, nil
 }

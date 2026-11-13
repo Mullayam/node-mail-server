@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ProtonMail/gluon/imap"
+
+	"imap/core/connector"
 	"imap/internal/dedupe"
 	"imap/internal/directorykind"
 	"imap/internal/filing"
@@ -40,6 +43,19 @@ func (cf *ConnectorFactory) Deliver(ctx context.Context, address, mailbox string
 	}
 
 	account := directorykind.Normalize(address)
+	if mailbox == "" {
+		switch stage := filing.Outbox(literal); stage {
+		case filing.OutboxQueued:
+			box, err := conn.EnsureMailbox(ctx, connector.OutboxName)
+			if err != nil {
+				return "", fmt.Errorf("prepare %s: %w", connector.OutboxName, err)
+			}
+			log.Printf("outbox: %s queued %s", account, dedupe.MessageID(literal))
+			return conn.Deliver(ctx, strings.Join(box.Name, "/"), filing.StripHeader(literal, filing.OutboxHeader), []string{imap.FlagSeen}, time.Now())
+		case filing.OutboxSent:
+			return conn.CompleteOutbox(ctx, filing.StripHeader(literal, filing.OutboxHeader))
+		}
+	}
 	messageID := dedupe.MessageID(literal)
 
 	outcome, existing, err := cf.seen.Claim(ctx, account, messageID)

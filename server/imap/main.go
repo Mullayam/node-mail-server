@@ -153,6 +153,7 @@ func main() {
 	defer instance.Close()
 
 	instance.SetFilingRules(func() filing.Rules { return holder.Current().Delivery })
+	instance.SetFolders(func() []string { return holder.Current().Folders })
 	err = instance.InitializeUsers(ctx)
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to initialize IMAP users")

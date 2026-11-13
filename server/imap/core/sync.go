@@ -51,6 +51,7 @@ func (cf *ConnectorFactory) SyncUsers(ctx context.Context) (SyncReport, error) {
 
 	for email := range want {
 		if _, loaded := cf.userConnectors[email]; loaded {
+			cf.ensureDefaults(ctx, cf.connectors[email])
 			continue
 		}
 		var known *string
