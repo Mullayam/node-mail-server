@@ -6,7 +6,6 @@
 // Built in:
 //
 //	pebble    the KV engine on Pebble, on disk (path="..."). Fully implemented.
-//	memory    the KV engine in memory, for tests. Lost on restart.
 //	dir       placeholder: one folder per account on disk (path="...")
 //	postgres  placeholder: a Postgres database (dsn="...")
 //

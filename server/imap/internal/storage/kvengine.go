@@ -16,10 +16,10 @@ import (
 	"imap/internal/storage/kv"
 )
 
-// The KV engine implements every Engine method on a kv.Store.
+// The KV engine implements every Engine method on a kv.Store. Mail is kept
+// on disk only; Gluon keeps its own cache for fast reads.
 //
-//	<storage engine="pebble" path="/data/mail"/>   on disk
-//	<storage engine="memory"/>                     in memory, for tests
+//	<storage engine="pebble" path="/data/mail"/>
 func init() {
 	Register("pebble", func(opts map[string]string) (Engine, error) {
 		if opts["path"] == "" {
@@ -30,9 +30,6 @@ func init() {
 			return nil, fmt.Errorf("pebble storage: %w", err)
 		}
 		return NewKVEngine(db), nil
-	})
-	Register("memory", func(map[string]string) (Engine, error) {
-		return NewKVEngine(kv.NewMemory()), nil
 	})
 }
 

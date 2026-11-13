@@ -11,7 +11,7 @@ import (
 )
 
 func TestKVEngineLifecycle(t *testing.T) {
-	for _, name := range []string{"memory", "pebble"} {
+	for _, name := range []string{"pebble"} {
 		t.Run(name, func(t *testing.T) {
 			e, err := Open(name, map[string]string{"path": t.TempDir()})
 			if err != nil {

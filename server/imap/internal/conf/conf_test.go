@@ -46,7 +46,7 @@ func TestParseReportsEveryProblem(t *testing.T) {
 }
 
 func TestTLSSettings(t *testing.T) {
-	base := `<directory kind="file" source="u.xml"/><storage engine="memory"/></imap>`
+	base := `<directory kind="file" source="u.xml"/><storage engine="pebble" path="/m"/></imap>`
 	c, err := Parse([]byte(`<imap><settings><tls cert="/c.pem" key="/k.pem"/></settings>` + base))
 	if err != nil {
 		t.Fatal(err)

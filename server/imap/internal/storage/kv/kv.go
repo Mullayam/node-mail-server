@@ -1,7 +1,7 @@
 // Package kv is the reusable key-value layer the storage engine is built on.
 //
 // A Store is anything with Get, Set, Delete, prefix Scan and atomic Batch.
-// Two drivers ship with it: Pebble (on disk) and Memory (tests). The helpers
+// The Pebble driver keeps everything on disk. The helpers
 // below (Key, GetJSON, SetJSON, Keys, DeletePrefix) are what the engine uses
 // for every operation, so a new driver only has to implement Store.
 package kv

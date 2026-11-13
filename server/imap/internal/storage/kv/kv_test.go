@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Every driver must pass the same suite.
+// Every driver must pass the same suite. Add new drivers here.
 func drivers(t *testing.T) map[string]Store {
 	t.Helper()
 	p, err := OpenPebble(t.TempDir())
@@ -13,7 +13,7 @@ func drivers(t *testing.T) map[string]Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { p.Close() })
-	return map[string]Store{"memory": NewMemory(), "pebble": p}
+	return map[string]Store{"pebble": p}
 }
 
 func TestStore(t *testing.T) {
