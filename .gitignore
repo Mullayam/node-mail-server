@@ -26,3 +26,5 @@ spool/
 server/imap/conf/imap.xml
 server/imap/conf/users.xml
 server/imap/tls/
+server/imap/conf/*.bak
+server/imap/conf/*.tmp

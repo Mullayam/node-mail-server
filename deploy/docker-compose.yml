@@ -64,9 +64,13 @@ services:
       - "127.0.0.1:143:143" # plain IMAP (STARTTLS when <tls> is set): local only
       - "993:993" # IMAPS: only answers when <tls> is set in imap.xml
     volumes:
-      - ../server/imap/conf:/etc/imap:ro
+      # imap.xml and users.xml. Read-write: imapctl user add/update/delete saves users.xml.
+      # On a Linux host the folder must be writable by uid 1000: sudo chown -R 1000:1000 server/imap/conf
+      - ../server/imap/conf:/etc/imap:rw
+      # Certificate and private key. Read-only: the server never writes them.
       - ../server/imap/tls:/etc/ssl/imap:ro
-      - imap-data:/data
+      # Pebble mail store (/data/mail) and Gluon's cache (/data/gluon). Back this up.
+      - imap-data:/data:rw
     restart: unless-stopped
 
   # Shared by outbound and relay (DKIM_BACKEND=redis). Not published.
