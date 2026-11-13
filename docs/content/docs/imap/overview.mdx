@@ -3,7 +3,7 @@ title: IMAP overview
 description: Mailboxes with ProtonMail's Gluon, mail stored in Pebble, delivery from port 25 over LMTP, a Junk folder for spam, TLS on 993, and live config reloads.
 ---
 
-IMAP lets mail clients such as Thunderbird, Outlook and mobile apps read your mail. The server in `server/imap` is built on [Gluon](https://github.com/ProtonMail/gluon), Proton's IMAP library. Mail is stored on disk in [Pebble](https://github.com/cockroachdb/pebble), a key-value database modelled on RocksDB.
+IMAP lets mail clients such as Thunderbird, Outlook and mobile apps read your mail. The server in `server/imap` is built on [Gluon](https://github.com/ProtonMail/gluon), Proton's IMAP library, through the [enjoys-in/gluon](https://github.com/enjoys-in/gluon) fork, which adds QUOTA, SORT and THREAD. Mail is stored on disk in [Pebble](https://github.com/cockroachdb/pebble), a key-value database modelled on RocksDB.
 
 <Callout title="What is not done yet" type="warn">
   There is no content spam scanner (such as Rspamd): spam is decided by the mail server's SPF, DKIM, DMARC and sender checks. Passwords are stored in plain text.
@@ -101,6 +101,46 @@ The attribute tells mail clients which folder plays which role, so Thunderbird, 
 
 `defaults=""` creates no default folders. Users can create, rename and delete their own folders in their mail client as usual.
 
+## IMAP commands
+
+The server speaks IMAP4rev1 (RFC 3501) and these extensions:
+
+| Area | Commands |
+|------|----------|
+| Session | `CAPABILITY`, `NOOP`, `LOGOUT`, `ID`, `STARTTLS`, `LOGIN`, `AUTHENTICATE PLAIN` |
+| Folders | `LIST`, `LSUB`, `CREATE`, `DELETE`, `RENAME`, `SUBSCRIBE`, `UNSUBSCRIBE`, `STATUS` |
+| Messages | `SELECT`, `EXAMINE`, `APPEND`, `FETCH`, `STORE`, `SEARCH`, `COPY`, `MOVE`, `EXPUNGE`, `CHECK`, `CLOSE`, `UNSELECT`, and the `UID` form of each |
+| Live updates | `IDLE` |
+| Quota (RFC 2087) | `GETQUOTA`, `GETQUOTAROOT` |
+| Sorting and threads (RFC 5256) | `SORT`, `THREAD REFERENCES`, `UID SORT`, `UID THREAD` |
+
+`UIDPLUS` adds `APPENDUID` and `COPYUID` to the replies, so clients know the UID of a saved or copied message without searching for it.
+
+**Quota.** Each user has one quota root, `""`, holding their storage and message limits from `imap.xml` or `users.xml`:
+
+```text
+C: a1 GETQUOTAROOT INBOX
+S: * QUOTAROOT INBOX ""
+S: * QUOTA "" (STORAGE 1530 1048576 MESSAGE 42 50000)
+```
+
+`STORAGE` is in units of 1024 bytes and `MESSAGE` is the number of messages. A limit that is not set is left out. Saving a message that would go over the limit is refused with `NO [OVERQUOTA]`, and Thunderbird shows the quota under the folder's properties.
+
+Not supported: `NAMESPACE`, `ENABLE`, `SETQUOTA` (set quotas with `imapctl quota set`), `CONDSTORE` and `QRESYNC`.
+
+### Updating Gluon
+
+`server/imap/go.mod` replaces `github.com/ProtonMail/gluon` with the `dev` branch of `enjoys-in/gluon`. To take in new upstream fixes, sync the fork with ProtonMail/gluon on GitHub, then update the pin and rebuild:
+
+```bash
+cd server/imap
+go mod edit -replace github.com/ProtonMail/gluon=github.com/enjoys-in/gluon@dev
+go mod tidy
+docker compose -f deploy/docker-compose.yml --profile imap up -d --build imap
+```
+
+`go mod tidy` turns `@dev` into the exact commit, so every build uses the same code until you update again.
+
 ## Who can use IMAP
 
 Every user in the directory is an SMTP user. IMAP works for a user only when IMAP is enabled for them. Users without it cannot log in over IMAP, and LMTP refuses mail for them (`550 5.1.1`).
@@ -113,7 +153,7 @@ Each part is a separate package with a small interface, so you can replace any o
 
 | Part | Package | What it does |
 |------|---------|--------------|
-| Gluon server | `main.go`, `core/` | Starts Gluon and loads the IMAP-enabled users. The connector (`core/connector/db.go`) implements all 16 methods of Gluon's `connector.Connector`, and a compile-time check fails the build if Gluon adds one. |
+| Gluon server | `main.go`, `core/` | Starts Gluon and loads the IMAP-enabled users. The connector (`core/connector/db.go`) implements every method of Gluon's `connector.Connector`, including the fork's `GetQuota` and `GetQuotaRoot` (`core/connector/quota.go`), and a compile-time check fails the build if Gluon adds one. |
 | Delivery | `core/deliver.go`, `internal/lmtp`, `internal/filing` | The LMTP listener, the INBOX-or-Junk decision, and the push to Gluon. |
 | Folders | `core/connector/folders.go` | Default folders, one folder per role, Starred, and the Outbox-to-Sent move. |
 | Duplicates | `internal/dedupe` | The SQLite record of delivered Message-IDs that stops a retried message being stored twice. |
