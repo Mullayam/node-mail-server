@@ -8,22 +8,17 @@ import (
 	"imap/internal/directorykind"
 )
 
-// SyncReport says what Sync changed in Gluon.
 type SyncReport struct {
-	Loaded  []string          `json:"loaded"`            // IMAP users in Gluon after the sync
-	Added   []string          `json:"added,omitempty"`   // newly loaded
-	Removed []string          `json:"removed,omitempty"` // unloaded: deleted, or IMAP turned off
-	Failed  map[string]string `json:"failed,omitempty"`  // email -> reason
+	Loaded  []string          `json:"loaded"`
+	Added   []string          `json:"added,omitempty"`
+	Removed []string          `json:"removed,omitempty"`
+	Failed  map[string]string `json:"failed,omitempty"`
 }
 
-// Sync satisfies router.Syncer: reload and user changes call it.
 func (cf *ConnectorFactory) Sync(ctx context.Context) (any, error) {
 	return cf.SyncUsers(ctx)
 }
 
-// SyncUsers makes Gluon match the directory: every user with IMAP enabled is
-// loaded, and every other user is unloaded. Unloading keeps the user's Gluon
-// files, so turning IMAP back on reuses them.
 func (cf *ConnectorFactory) SyncUsers(ctx context.Context) (SyncReport, error) {
 	cf.mu.Lock()
 	defer cf.mu.Unlock()

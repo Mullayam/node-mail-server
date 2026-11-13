@@ -31,7 +31,6 @@ import (
 	"imap/internal/tlscert"
 )
 
-// version is set at build time with -ldflags "-X main.version=...".
 var version = "prototype"
 
 var (
@@ -43,8 +42,6 @@ var (
 	socketFlag       = flag.String("socket", env("IMAP_CONTROL_SOCKET", control.DefaultSocket()), "Control socket used by imapctl.")
 )
 
-// classifyDeliveryError turns a delivery error into the LMTP reply the
-// sending server sees: permanent (5xx, do not retry) or temporary (4xx).
 func classifyDeliveryError(err error) lmtp.Reply {
 	switch {
 	case errors.Is(err, factory.ErrNotIMAPUser):
@@ -92,7 +89,6 @@ func main() {
 		logrus.SetLevel(level)
 	}
 
-	// 1. imap.xml: listen address, data dir, directory kind, storage engine, quota.
 	holder, err := conf.NewHolder(*configFlag)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -105,7 +101,6 @@ func main() {
 		logrus.Warn(w)
 	}
 
-	// 2. Storage engine (where mail lives) and directory (who the users are).
 	engine, err := storage.Open(cfg.Storage.Name, cfg.Storage.Options)
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to open storage engine")
@@ -121,10 +116,8 @@ func main() {
 		logrus.WithError(err).Fatal("Failed to load users")
 	}
 
-	// 3. Quota: defaults from imap.xml, usage from the storage engine.
 	quotas := quota.NewManager(cfg.Quota, engine)
 
-	// 4. Gluon.
 	dataDir := env("GLUON_DIR", cfg.DataDir)
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		logrus.WithError(err).Fatal("Failed to create data dir")
@@ -138,8 +131,6 @@ func main() {
 		gluon.WithDatabaseDir(dataDir),
 	}
 
-	// TLS: when <tls cert key> is set, offer STARTTLS on the plain port and
-	// listen on 993 with implicit TLS. The certificate reloads with imapctl.
 	var certs *tlscert.Store
 	if cfg.TLS.Enabled() {
 		certs, err = tlscert.Load(cfg.TLS.Cert, cfg.TLS.Key)
@@ -158,14 +149,13 @@ func main() {
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to create connector factory")
 	}
-	// Spam filing follows <delivery> in imap.xml, read on every message.
+
 	instance.SetFilingRules(func() filing.Rules { return holder.Current().Delivery })
 	err = instance.InitializeUsers(ctx)
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to initialize IMAP users")
 	}
 
-	// 5. Admin router, reachable through imapctl on the control socket.
 	r := router.New()
 	deps := router.Deps{
 		Conf:      holder,
@@ -189,7 +179,6 @@ func main() {
 		}
 	}()
 
-	// SIGHUP reloads too, so "docker kill -s HUP <container>" works.
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)
 	go func() {
@@ -207,7 +196,6 @@ func main() {
 		}
 	}()
 
-	// 6. Listen. GLUON_HOST overrides the address in imap.xml.
 	host := env("GLUON_HOST", cfg.Listen)
 
 	listener, err := net.Listen("tcp", host)
@@ -222,8 +210,6 @@ func main() {
 		logrus.WithError(err).Fatal("Failed to serve")
 	}
 
-	// LMTP: the mail server delivers incoming mail here. Not for the internet:
-	// only clients in <lmtp trusted> may connect.
 	var lmtpServer *lmtp.Server
 	if cfg.LMTP.Enabled() {
 		ln, err := net.Listen("tcp", cfg.LMTP.Listen)

@@ -1,18 +1,3 @@
-// Command imapctl talks to a running IMAP server through its control socket.
-//
-//	imapctl reload                 re-read imap.xml and the users, update Gluon
-//	imapctl status
-//	imapctl routes                 list every command the server knows
-//	imapctl user list
-//	imapctl user get <address>
-//	imapctl user add <address> -password P [-imap=true] [-quota-storage 1GB] [-quota-messages N]
-//	imapctl user update <address> [-password P] [-imap=false] [...]
-//	imapctl user delete <address>
-//	imapctl quota get <address>
-//	imapctl quota set <address> [-storage 2GB] [-messages N]
-//	imapctl mail deliver <address> [-mailbox NAME] < message.eml
-//
-// In Docker: docker compose -f deploy/docker-compose.yml exec imap imapctl reload
 package main
 
 import (
@@ -92,7 +77,6 @@ Docker: docker compose -f deploy/docker-compose.yml exec imap imapctl reload
 `)
 }
 
-// build turns the command line into a router command and its arguments.
 func build(args []string) (control.Request, error) {
 	if len(args) == 0 {
 		return control.Request{}, errors.New("no command")
@@ -105,7 +89,7 @@ func build(args []string) (control.Request, error) {
 			return control.Request{}, fmt.Errorf("%s needs a subcommand", args[0])
 		}
 	default:
-		return control.Request{Command: args[0]}, nil // let the server answer unknown commands
+		return control.Request{Command: args[0]}, nil
 	}
 
 	group, sub := args[0], args[1]

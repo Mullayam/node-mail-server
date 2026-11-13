@@ -17,23 +17,20 @@ import (
 	"imap/internal/storage"
 )
 
-// Implements Gluon's connector.Connector for one account. Logins are checked
-// against the directory; every mailbox and message operation goes to the
-// storage engine (internal/storage), which is where "dir", "postgres" or your
-// own engine plugs in. For reference see DummyConnector in Gluon's
-// connector/dummy.go.
+// Implements a sample IMAP connector using a SQL database as the backend.
+// For Reference See DummyConnector in dummy.go
 type MyDBConnector struct {
 	email   string
 	dir     directorykind.Directory
 	engine  storage.Engine
 	quota   *quota.Manager
-	updates chan imap.Update // read by Gluon through GetUpdates
+	updates chan imap.Update
 
-	mu       sync.RWMutex // guards isClosed against sends after Close
+	mu       sync.RWMutex
 	isClosed bool
 
 	user struct {
-		id    string // Gluon user ID
+		id    string
 		email string
 	}
 
@@ -42,8 +39,6 @@ type MyDBConnector struct {
 	mailboxVisibilities        map[imap.MailboxID]imap.MailboxVisibility
 }
 
-// The compiler checks that MyDBConnector has every method Gluon's
-// connector.Connector needs. A Gluon update that adds one fails the build here.
 var _ connector.Connector = (*MyDBConnector)(nil)
 
 var (
@@ -68,10 +63,6 @@ func NewConnector(email string, dir directorykind.Directory, engine storage.Engi
 	return c
 }
 
-// Sync makes sure the account has an INBOX in the storage engine. For a user
-// Gluon has not seen before (fresh), it also announces every stored mailbox
-// and message, so Gluon's cache matches the storage. Placeholder engines that
-// cannot list mailboxes are skipped.
 func (c *MyDBConnector) Sync(ctx context.Context, fresh bool) error {
 	mboxes, err := c.engine.ListMailboxes(ctx, c.email)
 	if errors.Is(err, storage.ErrNotImplemented) {
@@ -105,7 +96,6 @@ func (c *MyDBConnector) Sync(ctx context.Context, fresh bool) error {
 		return nil
 	}
 
-	// A message can be in several mailboxes: announce it once with all of them.
 	type entry struct {
 		msg   storage.Message
 		boxes []imap.MailboxID
@@ -128,8 +118,6 @@ func (c *MyDBConnector) Sync(ctx context.Context, fresh bool) error {
 		}
 	}
 
-	// Bodies are read from storage a few at a time and handed to Gluon, which
-	// keeps them in its own cache; nothing is held here after each push.
 	const chunk = 25
 	var batch []*imap.MessageCreated
 	for i, id := range order {
@@ -172,8 +160,6 @@ func gluonMailbox(m storage.Mailbox) imap.Mailbox {
 	}
 }
 
-// specialUse gives well-known top-level folders their RFC 6154 attribute,
-// so mail clients show them as their Junk, Sent, Drafts, Trash or Archive.
 func specialUse(name []string) imap.FlagSet {
 	if len(name) != 1 {
 		return defaultAttrs
@@ -193,9 +179,6 @@ func specialUse(name []string) imap.FlagSet {
 	return defaultAttrs
 }
 
-// EnsureMailbox returns the top-level mailbox with this name, creating it in
-// storage and announcing it to Gluon if it does not exist yet. Delivery uses
-// it for the Junk folder.
 func (c *MyDBConnector) EnsureMailbox(ctx context.Context, name string) (storage.Mailbox, error) {
 	mboxes, err := c.engine.ListMailboxes(ctx, c.email)
 	if err != nil {
@@ -223,7 +206,7 @@ func (c *MyDBConnector) Init(ctx context.Context, cache connector.IMAPState) err
 }
 
 // Authorize returns whether the given username/password combination are valid for this connector.
-// Only this account's own login counts, and only while IMAP is enabled for it.
+
 func (c *MyDBConnector) Authorize(ctx context.Context, username string, password []byte) bool {
 	if directorykind.Normalize(username) != c.email {
 		return false
@@ -271,7 +254,7 @@ func (c *MyDBConnector) DeleteMailbox(ctx context.Context, cache connector.IMAPS
 	return c.engine.DeleteMailbox(ctx, c.email, string(mboxID))
 }
 
-// CreateMessage creates a new message on the remote. The quota is checked first.
+// CreateMessage creates a new message on the remote.
 func (c *MyDBConnector) CreateMessage(ctx context.Context, cache connector.IMAPStateWrite, mboxID imap.MailboxID, literal []byte, flags imap.FlagSet, date time.Time) (imap.Message, []byte, error) {
 	var override *quota.Limit
 	if u, err := c.dir.Get(ctx, c.email); err == nil {
@@ -338,15 +321,11 @@ func (c *MyDBConnector) Close(ctx context.Context) error {
 }
 
 var (
-	// ErrClosed is returned when the user was unloaded from Gluon.
 	ErrClosed = errors.New("connector closed: the user is no longer loaded in Gluon")
-	// ErrInvalidMessage is returned by Deliver for a message Gluon cannot parse.
+
 	ErrInvalidMessage = errors.New("invalid message")
 )
 
-// push sends one update to Gluon through GetUpdates and waits until Gluon
-// has applied it, so connected IMAP clients see the change before push
-// returns. It gives up when ctx ends.
 func (c *MyDBConnector) push(ctx context.Context, u imap.Update) error {
 	c.mu.RLock()
 	if c.isClosed {
@@ -361,18 +340,12 @@ func (c *MyDBConnector) push(ctx context.Context, u imap.Update) error {
 		return ctx.Err()
 	}
 
-	// WaitContext reports (err, true) on failure and (nil, false) on success
-	// or when ctx ends.
 	if err, _ := u.WaitContext(ctx); err != nil {
 		return err
 	}
 	return ctx.Err()
 }
 
-// Deliver stores a message that arrived outside an IMAP session (for
-// example from SMTP) and announces it to Gluon, so every connected client
-// sees it at once. mailbox is a name such as "INBOX". If Gluon refuses the
-// message, it is removed from storage again.
 func (c *MyDBConnector) Deliver(ctx context.Context, mailbox string, literal []byte, flags []string, date time.Time) (string, error) {
 	mboxes, err := c.engine.ListMailboxes(ctx, c.email)
 	if err != nil {
@@ -387,7 +360,6 @@ func (c *MyDBConnector) Deliver(ctx context.Context, mailbox string, literal []b
 	}
 	mboxID := mboxes[idx].ID
 
-	// Check the message before storing it: Gluon refuses what it cannot parse.
 	parsed, err := imap.NewParsedMessage(literal)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalidMessage, err)
@@ -412,7 +384,7 @@ func (c *MyDBConnector) Deliver(ctx context.Context, mailbox string, literal []b
 		ParsedMessage: parsed,
 	})
 	if err := c.push(ctx, update); err != nil {
-		// Keep storage and Gluon in step: undo the store.
+
 		c.engine.RemoveFromMailbox(context.WithoutCancel(ctx), c.email, []string{id}, mboxID)
 		return "", fmt.Errorf("gluon did not accept the message: %w", err)
 	}

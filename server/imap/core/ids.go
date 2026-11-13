@@ -9,13 +9,10 @@ import (
 	"sync"
 )
 
-// idStore remembers each user's Gluon ID in a small JSON file in the data
-// dir. Without it, every restart would create a new, empty Gluon user.
-// A database-backed directory kind could keep this column instead.
 type idStore struct {
 	path string
 	mu   sync.Mutex
-	ids  map[string]string // email -> Gluon user ID
+	ids  map[string]string
 }
 
 func openIDStore(path string) (*idStore, error) {
@@ -40,8 +37,6 @@ func (s *idStore) get(email string) (string, bool) {
 	return id, ok
 }
 
-// set saves the mapping, writing a temp file first so a crash cannot leave a
-// half-written file.
 func (s *idStore) set(email, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
