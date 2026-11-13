@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func write(t *testing.T, path, body string) {
@@ -41,6 +42,28 @@ func TestParseReportsEveryProblem(t *testing.T) {
 	for _, want := range []string{"listen address", "directory kind", "storage engine", "quota storage"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q:\n%v", want, err)
+		}
+	}
+}
+
+func TestIdleBulk(t *testing.T) {
+	c, err := Parse([]byte(`<imap><settings></settings><directory kind="file"/><storage engine="pebble"/></imap>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.IdleBulk != 0 {
+		t.Errorf("default must push at once, got %s", c.IdleBulk)
+	}
+
+	c, err = Parse([]byte(`<imap><settings><idle bulk="250ms"/></settings><directory kind="file"/><storage engine="pebble"/></imap>`))
+	if err != nil || c.IdleBulk != 250*time.Millisecond {
+		t.Fatalf("bulk = %v, err %v", c, err)
+	}
+
+	for _, bad := range []string{"soon", "-1s", "5"} {
+		_, err := Parse([]byte(`<imap><settings><idle bulk="` + bad + `"/></settings><directory kind="file"/><storage engine="pebble"/></imap>`))
+		if err == nil || !strings.Contains(err.Error(), "idle bulk") {
+			t.Errorf("bulk %q: err = %v", bad, err)
 		}
 	}
 }

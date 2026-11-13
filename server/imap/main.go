@@ -129,6 +129,7 @@ func main() {
 		),
 		gluon.WithDataDir(dataDir),
 		gluon.WithDatabaseDir(dataDir),
+		gluon.WithIdleBulkTime(cfg.IdleBulk),
 	}
 
 	var certs *tlscert.Store

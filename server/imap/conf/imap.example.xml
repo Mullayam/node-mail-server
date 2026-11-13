@@ -27,6 +27,13 @@
       it. Only clients in "trusted" may connect: never publish this port.
     -->
     <lmtp listen="0.0.0.0:24" trusted="127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"/>
+    <!--
+      IDLE: how long Gluon may hold new-mail notices to merge them before it
+      pushes them to open clients. 0s sends each one at once. A value such as
+      500ms sends fewer, merged updates when many messages arrive together.
+      Changing it needs a container restart.
+    -->
+    <idle bulk="0s"/>
   </settings>
 
   <!--

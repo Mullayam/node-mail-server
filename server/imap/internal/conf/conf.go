@@ -101,6 +101,9 @@ type file struct {
 			Listen  string `xml:"listen,attr"`
 			Trusted string `xml:"trusted,attr"`
 		} `xml:"lmtp"`
+		Idle struct {
+			Bulk string `xml:"bulk,attr"`
+		} `xml:"idle"`
 	} `xml:"settings"`
 	Directory directoryElem `xml:"directory"`
 	Storage   storageElem   `xml:"storage"`
@@ -124,6 +127,7 @@ type Conf struct {
 	TLS       TLS
 	LMTP      LMTP
 	DataDir   string
+	IdleBulk  time.Duration
 	Directory Plugin
 	Storage   Plugin
 	Quota     quota.Limit
@@ -182,6 +186,14 @@ func Parse(data []byte) (*Conf, error) {
 				continue
 			}
 			c.LMTP.Trusted = append(c.LMTP.Trusted, p.Masked())
+		}
+	}
+	if b := strings.TrimSpace(f.Settings.Idle.Bulk); b != "" {
+		d, err := time.ParseDuration(b)
+		if err != nil || d < 0 {
+			problems = append(problems, fmt.Errorf("<idle bulk>: %q is not a duration such as 0s or 250ms", b))
+		} else {
+			c.IdleBulk = d
 		}
 	}
 	if c.Directory.Name == "" {
@@ -293,6 +305,7 @@ func (h *Holder) Reload() (*ReloadReport, error) {
 	restart("tls listen", old.TLS.Listen, next.TLS.Listen)
 	restart("lmtp listen", old.LMTP.Listen, next.LMTP.Listen)
 	restart("data dir", old.DataDir, next.DataDir)
+	restart("idle bulk", old.IdleBulk.String(), next.IdleBulk.String())
 	restart("directory kind", old.Directory.Name, next.Directory.Name)
 	restart("storage engine", old.Storage.Name, next.Storage.Name)
 	if !maps.Equal(old.Directory.Options, next.Directory.Options) {
