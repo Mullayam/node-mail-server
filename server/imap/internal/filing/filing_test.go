@@ -24,3 +24,31 @@ func TestDecide(t *testing.T) {
 		t.Errorf("spam-mailbox=INBOX should keep spam in INBOX, got %s", got)
 	}
 }
+
+func TestOutboxStage(t *testing.T) {
+	cases := map[string]OutboxStage{
+		"X-AE-Outbox: queued\r\nSubject: x\r\n\r\nb": OutboxQueued,
+		"x-ae-outbox:  SENT \r\n\r\nb":               OutboxSent,
+		"X-AE-Outbox: maybe\r\n\r\nb":                NotOutbox,
+		"Subject: x\r\n\r\nX-AE-Outbox: sent":        NotOutbox,
+	}
+	for in, want := range cases {
+		if got := Outbox([]byte(in)); got != want {
+			t.Errorf("Outbox(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestStripHeader(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"X-AE-Outbox: queued\r\nSubject: hi\r\n\r\nbody\r\n", "Subject: hi\r\n\r\nbody\r\n"},
+		{"Subject: hi\r\nx-ae-outbox: sent\r\n folded\r\n\tmore\r\nTo: a@b\r\n\r\nX-AE-Outbox: in body\r\n", "Subject: hi\r\nTo: a@b\r\n\r\nX-AE-Outbox: in body\r\n"},
+		{"Subject: hi\n\nbody", "Subject: hi\n\nbody"},
+		{"X-AE-Outboxed: keep\r\n\r\n", "X-AE-Outboxed: keep\r\n\r\n"},
+	}
+	for _, c := range cases {
+		if got := string(StripHeader([]byte(c.in), OutboxHeader)); got != c.want {
+			t.Errorf("StripHeader(%q)\n got  %q\n want %q", c.in, got, c.want)
+		}
+	}
+}
