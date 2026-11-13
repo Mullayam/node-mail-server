@@ -90,8 +90,9 @@ See [Environment variables](/docs/reference/environment-variables) for defaults.
 When `IMAP_LMTP_HOST` is set, the checked message (with the authentication and policy headers added above) is handed to the [IMAP server](/docs/imap/overview) over LMTP. It appears in the recipient's mailbox at once, in any mail client that is already open.
 
 - Mail tagged by a check (`X-AE-Spam-Flag: YES`) is filed in the recipient's **Junk** folder instead of the inbox.
-- If at least one recipient's mailbox takes the message, the server replies `250`.
-- If the IMAP server is down or busy, it replies `450`, so the sender retries later and nothing is lost.
-- If no recipient has a mailbox (unknown user, or IMAP turned off for them), it replies `550 5.1.1`. If every mailbox is full, it replies `552`.
+- If every recipient's mailbox takes the message, the server replies `250`.
+- If the IMAP server is down or busy, or any recipient hits a temporary error, it replies `450` for the whole message, so the sender retries later and nothing is lost. Mailboxes that already have the message do not store it again: the IMAP server keeps each delivered Message-ID per user in a SQLite file for 24 hours, and drops it when the user deletes the message.
+- If some recipients have a mailbox and others do not (unknown user, or IMAP turned off), the message is accepted and delivered to those who do. The refusals are logged, and the sender is not told.
+- If no recipient has a mailbox, it replies `550 5.1.1`. If every mailbox is full, it replies `552`.
 
 Without `IMAP_LMTP_HOST` the server still checks, labels and accepts mail, but does not store it.
