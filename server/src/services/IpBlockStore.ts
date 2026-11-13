@@ -1,6 +1,3 @@
-import { join } from "node:path";
-import { DEFAULTS } from "../config/constants";
-import { env } from "../config/env";
 import {
 	openSqlite,
 	type SqlDatabase,
@@ -63,9 +60,6 @@ const toBlock = (r: Row): IpBlock => ({
 	firstSeen: r.first_seen,
 	lastStrike: r.last_strike,
 });
-
-export const ipBlockDbPath = (): string =>
-	join(env.paths.dataDir, DEFAULTS.IP_BLOCK_DB_FILE);
 
 export class IpBlockStore {
 	private readonly db: SqlDatabase;

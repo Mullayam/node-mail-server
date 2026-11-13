@@ -217,7 +217,7 @@ export const DEFAULTS = {
 	SMTP_MESSAGES_FILE: "smtp-messages.json",
 	SPOOL_DIR: "spool",
 	DATA_DIR: "data",
-	IP_BLOCK_DB_FILE: "ip-blocks.db",
+	SERVER_DB_FILE: "server.db",
 } as const;
 
 export interface CheckSettings {

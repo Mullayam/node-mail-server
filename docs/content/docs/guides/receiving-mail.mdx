@@ -56,7 +56,7 @@ An IP that sends more than `incoming.rateLimit.maxMessagesPerMinute` messages in
 
 A temporary block is a `421`, so a real mail server only waits and retries. A blocked IP is refused as soon as it connects, before any other check runs.
 
-Strikes are kept in SQLite, in `MAIL_DATA_DIR/ip-blocks.db`, so a block survives a restart. An IP that stays clean for `strikeResetHours` (24 by default) starts again from strike 1. Networks in `incoming.trustedNetworks` are never limited or blocked.
+Strikes are kept in the `ip_blocks` table of the server's SQLite database, `MAIL_DATA_DIR/server.db`, so a block survives a restart. An IP that stays clean for `strikeResetHours` (24 by default) starts again from strike 1. Networks in `incoming.trustedNetworks` are never limited or blocked.
 
 ```json
 "ipBlocking": {

@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
-import { IpBlockStore, ipBlockDbPath } from "../services/IpBlockStore";
+import { serverDbPath } from "../lib/serverDb";
+import { IpBlockStore } from "../services/IpBlockStore";
 
 const USAGE = `Usage:
   bun src/cli/ipBlocks.ts list
@@ -15,13 +16,13 @@ if (!command || (command !== "list" && !isIP(ip ?? ""))) {
 	process.exit(1);
 }
 
-const store = new IpBlockStore(ipBlockDbPath());
+const store = new IpBlockStore(serverDbPath());
 try {
 	switch (command) {
 		case "list": {
 			const now = Date.now();
 			const rows = store.list();
-			console.log(`${rows.length} IP(s) in ${ipBlockDbPath()}`);
+			console.log(`${rows.length} IP(s) in ${serverDbPath()}`);
 			for (const b of rows) {
 				const status = b.permanent
 					? "PERMANENT"

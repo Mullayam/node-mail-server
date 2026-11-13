@@ -3,12 +3,8 @@ import { mailConfig } from "../config/mailConfig";
 import { type SmtpError, smtpReply } from "../config/smtpMessages";
 import { normalizeIp } from "../lib/helpers/RawMessage";
 import { Logging } from "../lib/logs";
-import {
-	type BlockState,
-	IpBlockStore,
-	ipBlockDbPath,
-	MINUTE_MS,
-} from "./IpBlockStore";
+import { serverDbPath } from "../lib/serverDb";
+import { type BlockState, IpBlockStore, MINUTE_MS } from "./IpBlockStore";
 
 const windows = new Map<string, { start: number; count: number }>();
 let store: IpBlockStore | undefined;
@@ -31,11 +27,11 @@ setInterval(() => {
 function openStore(): IpBlockStore | undefined {
 	if (store || storeFailed) return store;
 	try {
-		store = new IpBlockStore(ipBlockDbPath());
+		store = new IpBlockStore(serverDbPath());
 	} catch (error) {
 		storeFailed = true;
 		Logging.dev(
-			`IP block list unavailable (${ipBlockDbPath()}), blocks will not be kept: ${error}`,
+			`IP block list unavailable (${serverDbPath()}), blocks will not be kept: ${error}`,
 			"error",
 		);
 	}

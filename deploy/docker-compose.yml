@@ -20,7 +20,7 @@ services:
     ports:
       - "25:25"
     volumes:
-      # SQLite files the server keeps (data/ip-blocks.db: blocked IPs), so blocks survive a rebuild.
+      # The server's SQLite database (data/server.db, one table per feature), so it survives a rebuild.
       - inbound-data:/app/data:rw
     restart: unless-stopped
 
