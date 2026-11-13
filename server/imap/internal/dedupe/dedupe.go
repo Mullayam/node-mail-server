@@ -27,12 +27,34 @@ CREATE INDEX IF NOT EXISTS delivered_stored ON delivered (account, stored_id);
 CREATE INDEX IF NOT EXISTS delivered_at ON delivered (at);
 `
 
+const (
+	claimSQL = `INSERT INTO delivered (account, message_id, stored_id, at) VALUES (?, ?, '', ?)
+		ON CONFLICT (account, message_id) DO UPDATE SET stored_id = '', at = excluded.at
+		WHERE (delivered.stored_id <> '' AND delivered.at < ?)
+		   OR (delivered.stored_id =  '' AND delivered.at < ?)`
+	lookupSQL   = `SELECT stored_id FROM delivered WHERE account = ? AND message_id = ?`
+	completeSQL = `UPDATE delivered SET stored_id = ?, at = ? WHERE account = ? AND message_id = ?`
+	releaseSQL  = `DELETE FROM delivered WHERE account = ? AND message_id = ? AND stored_id = ''`
+	forgetSQL   = `DELETE FROM delivered INDEXED BY delivered_stored WHERE account = ? AND stored_id = ?`
+)
+
+type Outcome int
+
+const (
+	Claimed Outcome = iota
+	Duplicate
+	InFlight
+)
+
+const DefaultLease = 5 * time.Minute
+
 type Store struct {
-	db   *sql.DB
-	ttl  time.Duration
-	now  func() time.Time
-	stop chan struct{}
-	once sync.Once
+	db    *sql.DB
+	ttl   time.Duration
+	lease time.Duration
+	now   func() time.Time
+	stop  chan struct{}
+	once  sync.Once
 }
 
 func Open(path string, ttl time.Duration) (*Store, error) {
@@ -45,7 +67,7 @@ func Open(path string, ttl time.Duration) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("prepare %s: %w", path, err)
 	}
-	s := &Store{db: db, ttl: ttl, now: time.Now, stop: make(chan struct{})}
+	s := &Store{db: db, ttl: ttl, lease: DefaultLease, now: time.Now, stop: make(chan struct{})}
 	if _, err := s.Prune(context.Background()); err != nil {
 		db.Close()
 		return nil, err
@@ -54,31 +76,51 @@ func Open(path string, ttl time.Duration) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Seen(ctx context.Context, account, messageID string) (string, bool, error) {
+func (s *Store) Claim(ctx context.Context, account, messageID string) (Outcome, string, error) {
 	if messageID == "" {
-		return "", false, nil
+		return Claimed, "", nil
 	}
-	var id string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT stored_id FROM delivered WHERE account = ? AND message_id = ? AND at >= ?`,
-		account, messageID, s.cutoff()).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+	for range 3 {
+		res, err := s.db.ExecContext(ctx, claimSQL,
+			account, messageID, s.now().Unix(), s.recordCutoff(), s.leaseCutoff())
+		if err != nil {
+			return Claimed, "", err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return Claimed, "", err
+		} else if n > 0 {
+			return Claimed, "", nil
+		}
+
+		var id string
+		err = s.db.QueryRowContext(ctx, lookupSQL, account, messageID).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return Claimed, "", err
+		}
+		if id == "" {
+			return InFlight, "", nil
+		}
+		return Duplicate, id, nil
 	}
-	if err != nil {
-		return "", false, err
-	}
-	return id, true, nil
+	return Claimed, "", errors.New("the delivered-message record kept changing while it was read")
 }
 
-func (s *Store) Remember(ctx context.Context, account, messageID, storedID string) error {
+func (s *Store) Complete(ctx context.Context, account, messageID, storedID string) error {
 	if messageID == "" {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO delivered (account, message_id, stored_id, at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT (account, message_id) DO UPDATE SET stored_id = excluded.stored_id, at = excluded.at`,
-		account, messageID, storedID, s.now().Unix())
+	_, err := s.db.ExecContext(ctx, completeSQL, storedID, s.now().Unix(), account, messageID)
+	return err
+}
+
+func (s *Store) Release(ctx context.Context, account, messageID string) error {
+	if messageID == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, releaseSQL, account, messageID)
 	return err
 }
 
@@ -92,19 +134,38 @@ func (s *Store) Forget(ctx context.Context, account string, storedIDs ...string)
 	}
 	defer tx.Rollback()
 	for _, id := range storedIDs {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM delivered WHERE account = ? AND stored_id = ?`, account, id); err != nil {
+		if id == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, forgetSQL, account, id); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
 }
 
+const (
+	pruneRecords = `DELETE FROM delivered WHERE at < ?`
+	pruneClaims  = `DELETE FROM delivered WHERE at < ? AND stored_id = ''`
+)
+
 func (s *Store) Prune(ctx context.Context) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM delivered WHERE at < ?`, s.cutoff())
-	if err != nil {
-		return 0, err
+	var total int64
+	for _, q := range []struct {
+		sql    string
+		cutoff int64
+	}{{pruneRecords, s.recordCutoff()}, {pruneClaims, s.leaseCutoff()}} {
+		res, err := s.db.ExecContext(ctx, q.sql, q.cutoff)
+		if err != nil {
+			return total, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return total, err
+		}
+		total += n
 	}
-	return res.RowsAffected()
+	return total, nil
 }
 
 func (s *Store) Close() error {
@@ -112,7 +173,9 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) cutoff() int64 { return s.now().Add(-s.ttl).Unix() }
+func (s *Store) recordCutoff() int64 { return s.now().Add(-s.ttl).Unix() }
+
+func (s *Store) leaseCutoff() int64 { return s.now().Add(-s.lease).Unix() }
 
 func (s *Store) prune(every time.Duration) {
 	t := time.NewTicker(every)

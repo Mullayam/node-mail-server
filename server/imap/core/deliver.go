@@ -13,7 +13,10 @@ import (
 	"imap/internal/filing"
 )
 
-var ErrNotIMAPUser = errors.New("not an IMAP user: unknown, or IMAP is not enabled")
+var (
+	ErrNotIMAPUser = errors.New("not an IMAP user: unknown, or IMAP is not enabled")
+	ErrInFlight    = errors.New("the same message is being delivered right now, try again shortly")
+)
 
 func (cf *ConnectorFactory) SetFilingRules(fn func() filing.Rules) {
 	cf.mu.Lock()
@@ -38,12 +41,29 @@ func (cf *ConnectorFactory) Deliver(ctx context.Context, address, mailbox string
 
 	account := directorykind.Normalize(address)
 	messageID := dedupe.MessageID(literal)
-	id, dup, err := cf.seen.Seen(ctx, account, messageID)
-	if err != nil {
+
+	outcome, existing, err := cf.seen.Claim(ctx, account, messageID)
+	tracked := err == nil && messageID != ""
+	switch {
+	case err != nil:
 		log.Printf("delivery: duplicate check failed for %s, storing the message anyway: %v", account, err)
-	} else if dup {
+	case outcome == dedupe.Duplicate:
 		log.Printf("delivery: %s already has %s, not storing it again", account, messageID)
-		return id, nil
+		return existing, nil
+	case outcome == dedupe.InFlight:
+		log.Printf("delivery: %s is already receiving %s, asking the sender to retry", account, messageID)
+		return "", ErrInFlight
+	}
+	stored := false
+	if tracked {
+		defer func() {
+			if stored {
+				return
+			}
+			if err := cf.seen.Release(context.WithoutCancel(ctx), account, messageID); err != nil {
+				log.Printf("delivery: could not release the claim on %s for %s: %v", messageID, account, err)
+			}
+		}()
 	}
 
 	if mailbox == "" {
@@ -60,15 +80,19 @@ func (cf *ConnectorFactory) Deliver(ctx context.Context, address, mailbox string
 				return "", fmt.Errorf("prepare %s: %w", d.Mailbox, err)
 			}
 			mailbox = strings.Join(m.Name, "/")
-			log.Printf("delivery: %s -> %s (%s)", directorykind.Normalize(address), mailbox, d.Reason)
+			log.Printf("delivery: %s -> %s (%s)", account, mailbox, d.Reason)
 		}
 	}
-	id, err = conn.Deliver(ctx, mailbox, literal, nil, time.Now())
+
+	id, err := conn.Deliver(ctx, mailbox, literal, nil, time.Now())
 	if err != nil {
-		return id, err
+		return "", err
 	}
-	if rerr := cf.seen.Remember(ctx, account, messageID, id); rerr != nil {
-		log.Printf("delivery: could not record %s for %s: %v", messageID, account, rerr)
+	stored = true
+	if tracked {
+		if err := cf.seen.Complete(context.WithoutCancel(ctx), account, messageID, id); err != nil {
+			log.Printf("delivery: could not record %s for %s: %v", messageID, account, err)
+		}
 	}
 	return id, nil
 }
