@@ -19,7 +19,7 @@ cp relay/policy/users.example.lua relay/policy/users.lua
 docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml ps
 
-# Optional: also start IMAP (prototype)
+# Optional: also start IMAP
 cp server/imap/conf/imap.example.xml server/imap/conf/imap.xml
 cp server/imap/conf/users.example.xml server/imap/conf/users.xml
 docker compose -f deploy/docker-compose.yml --profile imap up -d
@@ -84,3 +84,7 @@ docker compose -f deploy/docker-compose.yml down               # stop everything
 # IMAP: apply edits to server/imap/conf/*.xml without a restart
 docker compose -f deploy/docker-compose.yml exec imap imapctl reload
 ```
+
+<Callout title="compose needs every env file, even to run one command" type="warn">
+  `docker compose` reads the `env_file` of every service before it runs any command, including `exec`. If `relay/.env` or `outbound/.env` is missing, `exec imap ...` fails with "env file not found". Copy the examples as shown above, or run the command in the container directly: `docker exec node-mail-server-imap-1 imapctl reload`.
+</Callout>

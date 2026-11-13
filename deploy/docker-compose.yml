@@ -1,7 +1,7 @@
 # Whole mail stack. Run from the repo root:
 #
 #   docker compose -f deploy/docker-compose.yml up -d                  # inbound + outbound + relay + redis
-#   docker compose -f deploy/docker-compose.yml --profile imap up -d   # also imap (prototype)
+#   docker compose -f deploy/docker-compose.yml --profile imap up -d   # also imap
 #
 # Port ownership: inbound (Node) publishes 25, outbound (KumoMTA) publishes 587,
 # relay (KumoMTA) publishes 2587.

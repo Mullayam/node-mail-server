@@ -6,7 +6,7 @@ description: A self-hosted mail stack that receives mail on port 25, sends it fr
 NodeMailServer started as a fun experiment and has grown into a small mail platform you run yourself. It receives mail for your domains, checks who sent it, accepts mail from your own apps and mail clients, delivers it to the rest of the internet, and processes the bounces that come back.
 
 <Callout title="Under development" type="warn">
-  Receiving and sending mail are implemented. Mailbox storage and IMAP are still being built, and some plugins are not connected to the mail pipeline yet. Each page says what is ready and what is not.
+  Receiving mail, sending mail and IMAP mailboxes are implemented. Some plugins are not connected to the mail pipeline yet. Each page says what is ready and what is not.
 </Callout>
 
 ## What is in the box
@@ -17,7 +17,7 @@ NodeMailServer started as a fun experiment and has grown into a small mail platf
 | Bounce server and JSON API | `server/` | 2525, 8025 and 8080 | Reads bounce reports, keeps a suppression list, and sends mail from one HTTP request. Both are off until you set a token. |
 | Go MTA | `server/go-mta/` | 2580 | Optional delivery service written in Go. |
 | Sending MTA (KumoMTA) | `outbound/` | 587 | Optional delivery engine with SMTP AUTH, per-domain rate limits, DKIM and delivery webhooks. The Node server can use it through SMTP or its HTTP API. |
-| IMAP server (Go + Gluon) | `server/imap/` | 143 | Lets mail clients read mailboxes. Work in progress. |
+| IMAP server (Go + Gluon) | `server/imap/` | 143 and 993 | Lets mail clients such as Thunderbird, Outlook and phone apps read mailboxes. Mail received on port 25 is stored in it. See [IMAP](/docs/imap/overview). |
 | Documentation | `docs/` | 3000 | This site. |
 
 ## How mail flows
