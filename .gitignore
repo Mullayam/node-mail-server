@@ -22,6 +22,9 @@ records.json
 # Node outbound queue (server/src/server/mta/OutboundQueue.ts)
 spool/
 
+# Node server SQLite files, such as the blocked-IP list (MAIL_DATA_DIR)
+server/data/
+
 # IMAP configs hold passwords: commit only the *.example.xml files
 server/imap/conf/imap.xml
 server/imap/conf/users.xml

@@ -15,8 +15,13 @@ services:
   inbound:
     build: ../server
     env_file: ../server/.env
+    environment:
+      MAIL_DATA_DIR: /app/data
     ports:
       - "25:25"
+    volumes:
+      # SQLite files the server keeps (data/ip-blocks.db: blocked IPs), so blocks survive a rebuild.
+      - inbound-data:/app/data:rw
     restart: unless-stopped
 
   # Sending MTA (KumoMTA): authenticated submission on :587, DKIM, queues, delivery.
@@ -81,6 +86,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  inbound-data:
   kumo-spool:
   kumo-logs:
   relay-spool:
