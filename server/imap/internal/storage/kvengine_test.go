@@ -47,6 +47,13 @@ func TestKVEngineLifecycle(t *testing.T) {
 			if _, err := e.GetMessage(ctx, a, m1); err != nil {
 				t.Fatalf("m1 should survive while it is in Archive: %v", err)
 			}
+			ex, ok := e.(Existence)
+			if !ok {
+				t.Fatalf("%s should answer HasMessage without reading bodies", name)
+			}
+			if has, err := ex.HasMessage(ctx, a, m1); err != nil || !has {
+				t.Fatalf("HasMessage(m1) = %v, %v while it is in Archive", has, err)
+			}
 
 			if err := e.MoveMessages(ctx, a, []string{m2}, inbox, archive); err != nil {
 				t.Fatal(err)
@@ -70,6 +77,12 @@ func TestKVEngineLifecycle(t *testing.T) {
 			}
 			if _, err := e.GetMessage(ctx, a, m1); !errors.Is(err, ErrMessageNotFound) {
 				t.Fatalf("m1 should be gone: %v", err)
+			}
+			if has, err := ex.HasMessage(ctx, a, m1); err != nil || has {
+				t.Fatalf("HasMessage(m1) = %v, %v after its last folder was deleted", has, err)
+			}
+			if has, _ := ex.HasMessage(ctx, "other@example.com", m2); has {
+				t.Fatal("HasMessage must not see another account's message")
 			}
 			if u, _ := e.Usage(ctx, a); u != (quota.Usage{}) {
 				t.Fatalf("usage after delete = %+v", u)

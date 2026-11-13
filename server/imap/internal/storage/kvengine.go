@@ -91,6 +91,10 @@ func (e *KVEngine) GetMessage(_ context.Context, a, messageID string) ([]byte, e
 	return body, err
 }
 
+func (e *KVEngine) HasMessage(_ context.Context, a, messageID string) (bool, error) {
+	return kv.Has(e.db, kMessage(a, messageID))
+}
+
 func (e *KVEngine) Usage(_ context.Context, a string) (quota.Usage, error) {
 	u, err := kv.GetJSON[quota.Usage](e.db, kUsage(a))
 	if errors.Is(err, kv.ErrNotFound) {

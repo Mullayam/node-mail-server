@@ -49,6 +49,10 @@ type Engine interface {
 	Close() error
 }
 
+type Existence interface {
+	HasMessage(ctx context.Context, account, messageID string) (bool, error)
+}
+
 type Factory func(options map[string]string) (Engine, error)
 
 var (

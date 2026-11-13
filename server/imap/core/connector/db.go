@@ -377,13 +377,25 @@ func (c *MyDBConnector) deleted(ctx context.Context, candidates []string) {
 	}
 	var gone []string
 	for _, id := range candidates {
-		if _, err := c.engine.GetMessage(ctx, c.email, id); errors.Is(err, storage.ErrMessageNotFound) {
+		if missing, err := c.messageGone(ctx, id); err == nil && missing {
 			gone = append(gone, id)
 		}
 	}
 	if len(gone) > 0 {
 		fn(context.WithoutCancel(ctx), c.email, gone)
 	}
+}
+
+func (c *MyDBConnector) messageGone(ctx context.Context, id string) (bool, error) {
+	if e, ok := c.engine.(storage.Existence); ok {
+		has, err := e.HasMessage(ctx, c.email, id)
+		return !has, err
+	}
+	_, err := c.engine.GetMessage(ctx, c.email, id)
+	if errors.Is(err, storage.ErrMessageNotFound) {
+		return true, nil
+	}
+	return false, err
 }
 
 func (c *MyDBConnector) Deliver(ctx context.Context, mailbox string, literal []byte, flags []string, date time.Time) (string, error) {
