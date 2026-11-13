@@ -37,6 +37,8 @@ type MyDBConnector struct {
 	allowUnknownMailbox        bool
 	folderPrefix, labelsPrefix string
 	mailboxVisibilities        map[imap.MailboxID]imap.MailboxVisibility
+
+	onDeleted func(ctx context.Context, account string, messageIDs []string)
 }
 
 var _ connector.Connector = (*MyDBConnector)(nil)
@@ -251,7 +253,17 @@ func (c *MyDBConnector) UpdateMailboxName(ctx context.Context, cache connector.I
 
 // DeleteMailbox deletes the mailbox with the given ID.
 func (c *MyDBConnector) DeleteMailbox(ctx context.Context, cache connector.IMAPStateWrite, mboxID imap.MailboxID) error {
-	return c.engine.DeleteMailbox(ctx, c.email, string(mboxID))
+	var inside []string
+	if msgs, err := c.engine.ListMessages(ctx, c.email, string(mboxID)); err == nil {
+		for _, m := range msgs {
+			inside = append(inside, m.ID)
+		}
+	}
+	if err := c.engine.DeleteMailbox(ctx, c.email, string(mboxID)); err != nil {
+		return err
+	}
+	c.deleted(ctx, inside)
+	return nil
 }
 
 // CreateMessage creates a new message on the remote.
@@ -277,7 +289,11 @@ func (c *MyDBConnector) AddMessagesToMailbox(ctx context.Context, cache connecto
 
 // RemoveMessagesFromMailbox removes the given messages from the given mailbox.
 func (c *MyDBConnector) RemoveMessagesFromMailbox(ctx context.Context, cache connector.IMAPStateWrite, messageIDs []imap.MessageID, mboxID imap.MailboxID) error {
-	return c.engine.RemoveFromMailbox(ctx, c.email, ids(messageIDs), string(mboxID))
+	if err := c.engine.RemoveFromMailbox(ctx, c.email, ids(messageIDs), string(mboxID)); err != nil {
+		return err
+	}
+	c.deleted(ctx, ids(messageIDs))
+	return nil
 }
 
 // MoveMessages removes the given messages from one mailbox and adds them to the another mailbox.
@@ -344,6 +360,30 @@ func (c *MyDBConnector) push(ctx context.Context, u imap.Update) error {
 		return err
 	}
 	return ctx.Err()
+}
+
+func (c *MyDBConnector) SetDeleted(fn func(ctx context.Context, account string, messageIDs []string)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onDeleted = fn
+}
+
+func (c *MyDBConnector) deleted(ctx context.Context, candidates []string) {
+	c.mu.RLock()
+	fn := c.onDeleted
+	c.mu.RUnlock()
+	if fn == nil || len(candidates) == 0 {
+		return
+	}
+	var gone []string
+	for _, id := range candidates {
+		if _, err := c.engine.GetMessage(ctx, c.email, id); errors.Is(err, storage.ErrMessageNotFound) {
+			gone = append(gone, id)
+		}
+	}
+	if len(gone) > 0 {
+		fn(context.WithoutCancel(ctx), c.email, gone)
+	}
 }
 
 func (c *MyDBConnector) Deliver(ctx context.Context, mailbox string, literal []byte, flags []string, date time.Time) (string, error) {
