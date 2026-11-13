@@ -1,7 +1,5 @@
 github.com/DataDog/zstd v1.5.7 h1:ybO8RBeh29qrxIhCA9E8gKY6xfONU9T6G6aP9DTKfLE=
 github.com/DataDog/zstd v1.5.7/go.mod h1:g4AWEaM3yOg3HYfnJ3YIawPnVdXJh9QME85blwSAmyw=
-github.com/ProtonMail/gluon v0.0.0-20261102113653-d871584e5e1e h1:0e1fRjf82tQ1WyPkbM0ypPilJvlcw4wUF0mfmzn8oiM=
-github.com/ProtonMail/gluon v0.0.0-20261102113653-d871584e5e1e/go.mod h1:i3CLtR5PvXNFuFLS87r/VzsB3qnLhrmVm4SK3vm9Wls=
 github.com/RaduBerinde/axisds v0.1.0 h1:YItk/RmU5nvlsv/awo2Fjx97Mfpt4JfgtEVAGPrLdz8=
 github.com/RaduBerinde/axisds v0.1.0/go.mod h1:UHGJonU9z4YYGKJxSaC6/TNcLOBptpmM5m2Cksbnw0Y=
 github.com/RaduBerinde/btreemap v0.0.0-20250419174037-3d62b7205d54 h1:bsU8Tzxr/PNz75ayvCnxKZWEYdLMPDkUgticP4a4Bvk=
@@ -43,6 +41,8 @@ github.com/emersion/go-imap v1.2.1/go.mod h1:Qlx1FSx2FTxjnjWpIlVNEuX+ylerZQNFE5N
 github.com/emersion/go-message v0.15.0/go.mod h1:wQUEfE+38+7EW8p8aZ96ptg6bAb1iwdgej19uXASlE4=
 github.com/emersion/go-sasl v0.0.0-20200509203442-7bfe0ed36a21/go.mod h1:iL2twTeMvZnrg54ZoPDNfJaJaqy0xIQFuBdrLsmspwQ=
 github.com/emersion/go-textwrapper v0.0.0-20200911093747-65d896831594/go.mod h1:aqO8z8wPrjkscevZJFVE1wXJrLpC5LtJG7fqLOsPb2U=
+github.com/enjoys-in/gluon v0.0.0-20261113115540-f6e3191b676a h1:ozzDI015t+UuxavqP9RkggA1tdVzfl9hOKIlYwXGEWI=
+github.com/enjoys-in/gluon v0.0.0-20261113115540-f6e3191b676a/go.mod h1:i3CLtR5PvXNFuFLS87r/VzsB3qnLhrmVm4SK3vm9Wls=
 github.com/felixge/fgprof v0.9.3 h1:VvyZxILNuCiUCSXtPtYmmtGvb65nqXh2QFWc0Wpf2/g=
 github.com/felixge/fgprof v0.9.3/go.mod h1:RdbpDgzqYVh/T9fPELJyV7EYJuHB55UTEULNun8eiPw=
 github.com/getsentry/sentry-go v0.27.0 h1:Pv98CIbtB3LkMWmXi4Joa5OOcwbmnX88sF5qbK3r3Ps=

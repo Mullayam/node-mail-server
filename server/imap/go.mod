@@ -49,3 +49,5 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 )
+
+replace github.com/ProtonMail/gluon => github.com/enjoys-in/gluon v0.0.0-20261113115540-f6e3191b676a

@@ -244,11 +244,7 @@ func (c *MyDBConnector) DeleteMailbox(ctx context.Context, cache connector.IMAPS
 
 // CreateMessage creates a new message on the remote.
 func (c *MyDBConnector) CreateMessage(ctx context.Context, cache connector.IMAPStateWrite, mboxID imap.MailboxID, literal []byte, flags imap.FlagSet, date time.Time) (imap.Message, []byte, error) {
-	var override *quota.Limit
-	if u, err := c.dir.Get(ctx, c.email); err == nil {
-		override = u.Quota
-	}
-	if err := c.quota.Check(ctx, c.email, c.quota.Effective(override), int64(len(literal))); err != nil {
+	if err := c.checkQuota(ctx, len(literal)); err != nil {
 		return imap.Message{}, nil, err
 	}
 	if c.isStarred(string(mboxID)) {
@@ -436,11 +432,7 @@ func (c *MyDBConnector) Deliver(ctx context.Context, mailbox string, literal []b
 		return "", fmt.Errorf("%w: %v", ErrInvalidMessage, err)
 	}
 
-	var override *quota.Limit
-	if u, err := c.dir.Get(ctx, c.email); err == nil {
-		override = u.Quota
-	}
-	if err := c.quota.Check(ctx, c.email, c.quota.Effective(override), int64(len(literal))); err != nil {
+	if err := c.checkQuota(ctx, len(literal)); err != nil {
 		return "", err
 	}
 
