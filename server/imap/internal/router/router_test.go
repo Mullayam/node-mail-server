@@ -20,7 +20,6 @@ type fakeSync struct{ calls int }
 
 func (f *fakeSync) Sync(context.Context) (any, error) { f.calls++; return "synced", nil }
 
-// setup builds the admin router over a temp imap.xml and users.xml.
 func setup(t *testing.T) (*Router, *fakeSync, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -86,7 +85,6 @@ func TestUserWritesReachTheDirectory(t *testing.T) {
 		t.Errorf("users.xml not written:\n%s", data)
 	}
 
-	// A refused change must not touch Gluon.
 	if _, err := r.Dispatch(ctx, "user.add", Args{"address": "z@a.com", "password": "p"}); !errors.Is(err, directorykind.ErrExists) {
 		t.Errorf("duplicate add: %v", err)
 	}
@@ -130,7 +128,7 @@ func TestMailDeliver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// No -mailbox: the deliverer files it (an empty mailbox means "decide").
+
 	if m.got != "X@A.com  Subject: hi\r\n\r\nbody" || got.(map[string]any)["message_id"] != "id-1" {
 		t.Errorf("deliver got %q, result %v", m.got, got)
 	}
@@ -169,7 +167,7 @@ func TestOverControlSocket(t *testing.T) {
 
 	var resp *control.Response
 	var err error
-	for i := 0; i < 50; i++ { // wait for the socket
+	for i := 0; i < 50; i++ {
 		if resp, err = control.Do(sock, control.Request{Command: "user.get", Args: map[string]string{"address": "x@a.com"}}, time.Second); err == nil {
 			break
 		}
