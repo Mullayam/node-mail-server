@@ -101,6 +101,28 @@ The attribute tells mail clients which folder plays which role, so Thunderbird, 
 
 `defaults=""` creates no default folders. Users can create, rename and delete their own folders in their mail client as usual.
 
+## Connect a mail client
+
+Add an account in Thunderbird, Outlook, Apple Mail or a phone app and enter the settings by hand:
+
+| Setting | Local test (no certificate) | With a certificate |
+|---------|-----------------------------|--------------------|
+| Incoming protocol | IMAP | IMAP |
+| Server | `127.0.0.1` | your mail host name |
+| Port | `143` | `993` with SSL/TLS, or `143` with STARTTLS |
+| Connection security | None | SSL/TLS, or STARTTLS |
+| Authentication | Normal password | Normal password |
+| User name | the full address, such as `user1@example.com` | the same |
+| Password | the one in `users.xml` | the same |
+
+Port 143 is published on `127.0.0.1` only, so without a certificate the server can be used from the same machine and nothing is sent in the clear over a network. Thunderbird warns that the connection is not encrypted. Confirm it for a local test.
+
+Reading mail needs no outgoing (SMTP) server. If the client insists on one, enter any value and ignore errors about it. To send, see [Sending mail](/docs/guides/sending-mail).
+
+- **Folders.** A client caches its folder list. If a default folder does not appear, refresh the account or tick it in the client's Subscribe dialog.
+- **Quota.** Thunderbird shows it under the folder's Properties, on the Quota tab.
+- **Live updates.** Clients that use IDLE show new mail at once. See [Live updates](#live-updates).
+
 ## IMAP commands
 
 The server speaks IMAP4rev1 (RFC 3501) and these extensions:
@@ -116,6 +138,8 @@ The server speaks IMAP4rev1 (RFC 3501) and these extensions:
 
 `UIDPLUS` adds `APPENDUID` and `COPYUID` to the replies, so clients know the UID of a saved or copied message without searching for it.
 
+`SUBSCRIBE` and `UNSUBSCRIBE` answer `OK` when the folder is already in that state. Every new folder starts subscribed, and Thunderbird subscribes right after it creates one.
+
 **Quota.** Each user has one quota root, `""`, holding their storage and message limits from `imap.xml` or `users.xml`:
 
 ```text
@@ -126,7 +150,16 @@ S: * QUOTA "" (STORAGE 1530 1048576 MESSAGE 42 50000)
 
 `STORAGE` is in units of 1024 bytes and `MESSAGE` is the number of messages. A limit that is not set is left out. Saving a message that would go over the limit is refused with `NO [OVERQUOTA]`, and Thunderbird shows the quota under the folder's properties.
 
-Not supported: `NAMESPACE`, `ENABLE`, `SETQUOTA` (set quotas with `imapctl quota set`), `CONDSTORE` and `QRESYNC`.
+### Not supported
+
+| Command | What it does | Why it is not needed here |
+|---------|--------------|---------------------------|
+| `NAMESPACE` (RFC 2342) | Tells a client where personal and shared folders live and what separator they use. | Every folder is personal, at the top level, with `/` as the separator. Clients without NAMESPACE ask `LIST "" ""` for the separator, which works. It would matter for shared mailboxes. |
+| `ENABLE` (RFC 5161) | Switches on an optional extension, such as `CONDSTORE`, for the rest of the session. | The server advertises no extension that needs enabling, so no client sends it. |
+| `SETQUOTA` (RFC 2087) | Changes a limit over IMAP. | Letting clients change limits is a risk, since users could raise their own. Read-only `GETQUOTA` works. Set limits as the admin with `imapctl quota set`, or in `users.xml`. |
+| `CONDSTORE` and `QRESYNC` | Let a client fetch only what changed since its last visit. | Clients re-read folders instead, which is slower on very large mailboxes. |
+
+None of these stops Thunderbird, Outlook, Apple Mail or phone apps from working.
 
 ### Updating Gluon
 
@@ -135,11 +168,11 @@ Not supported: `NAMESPACE`, `ENABLE`, `SETQUOTA` (set quotas with `imapctl quota
 ```bash
 cd server/imap
 go mod edit -replace github.com/ProtonMail/gluon=github.com/enjoys-in/gluon@dev
-go mod tidy
+GOPROXY=direct go mod tidy
 docker compose -f deploy/docker-compose.yml --profile imap up -d --build imap
 ```
 
-`go mod tidy` turns `@dev` into the exact commit, so every build uses the same code until you update again.
+`go mod tidy` turns `@dev` into the exact commit, so every build uses the same code until you update again. Use `GOPROXY=direct` because Go's public proxy caches branch lookups, so right after a merge it can still resolve `dev` to the previous commit and leave the pin unchanged. Check that the `replace` line in `go.mod` shows the new commit.
 
 ## Who can use IMAP
 
@@ -212,7 +245,7 @@ The login name is `user@domain`. `imap` on a domain is the default for its users
 docker compose -f deploy/docker-compose.yml exec imap imapctl reload
 ```
 
-It works like `caddy reload`: the new files are validated first and swapped in atomically, with no restart and no dropped connections. If a file is invalid, its old version stays live and `imapctl` exits with code 1 and says why. A reload re-reads `imap.xml`, the TLS certificate and `users.xml`, then loads or unloads users in Gluon.
+It works like `caddy reload`: the new files are validated first and swapped in atomically, with no restart and no dropped connections. If a file is invalid, its old version stays live and `imapctl` exits with code 1 and says why. A reload re-reads `imap.xml`, the TLS certificate and `users.xml`, loads or unloads users in Gluon, and creates any default folders that users are missing.
 
 `imapctl reloadxml` and `docker kill -s HUP <container>` do the same. The one difference from Caddy: changing a listen address (143, 993, LMTP), the data dir, the IDLE bulk time, the user kind or the storage engine needs a container restart, and the reload output says so.
 
@@ -231,13 +264,15 @@ All of them run in the container with `imapctl`:
 | `imapctl quota get <address>` / `quota set <address> -storage 2GB` | Show or set a user's limit and usage. |
 | `imapctl mail deliver <address> < message.eml` | Store a message (INBOX or Junk) and show it to open clients. `-mailbox NAME` picks the folder. |
 
-Use `docker compose exec -T` when you pipe a file into `imapctl mail deliver`.
+Use `docker compose exec -T` when you pipe a file into `imapctl mail deliver`. If `docker compose` complains about a missing env file, run `imapctl` in the container directly, for example `docker exec node-mail-server-imap-1 imapctl status`. See [Docker Compose](/docs/deployment/docker-compose#everyday-commands).
 
 Writing `users.xml` keeps the previous file as `users.xml.bak`. The file is rewritten from the user list, so comments in it are not kept.
 
 ## TLS and port 993
 
 Put `fullchain.pem` and `privkey.pem` in `server/imap/tls/` (gitignored, mounted read-only at `/etc/ssl/imap`) and enable the `<tls>` line. The server then listens on **993** with implicit TLS and offers **STARTTLS** on 143, with TLS 1.2 as the minimum. After a renewal, run `imapctl reload`: new connections get the new certificate.
+
+STARTTLS is advertised only on a connection that is not encrypted yet, so it is missing from the capabilities on 993 and after a client has upgraded. Without a certificate, STARTTLS is not offered, and a client that asks for it anyway gets `NO TLS is unavailable` and can carry on unencrypted. That is why a client set to "STARTTLS" fails on a server with no certificate, while one set to "None" works.
 
 ## Storage
 
