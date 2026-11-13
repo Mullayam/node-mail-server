@@ -37,6 +37,7 @@ const positivePaths = [
 	"incoming.maxMessageSizeBytes",
 	"incoming.maxRecipients",
 	"incoming.rateLimit.maxMessagesPerMinute",
+	"incoming.ipBlocking.strikeResetHours",
 	"outgoing.maxMessageSizeBytes",
 	"outgoing.maxRecipients",
 	"queue.maxConcurrent",
@@ -64,6 +65,18 @@ function validate(config: MailConfig): string[] {
 			CONFIG_ERROR.WRONG_TYPE(
 				"queue.retryDelaysMinutes",
 				"a non-empty list of minutes above 0",
+			),
+		);
+	}
+	const blockMinutes = config.incoming.ipBlocking.temporaryBlockMinutes;
+	if (
+		!Array.isArray(blockMinutes) ||
+		blockMinutes.some((m) => typeof m !== "number" || !(m > 0))
+	) {
+		errors.push(
+			CONFIG_ERROR.WRONG_TYPE(
+				"incoming.ipBlocking.temporaryBlockMinutes",
+				"a list of minutes above 0 (one per temporary block before the permanent one)",
 			),
 		);
 	}

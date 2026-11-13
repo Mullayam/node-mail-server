@@ -216,6 +216,8 @@ export const DEFAULTS = {
 	MAIL_CONFIG_FILE: "mail.config.json",
 	SMTP_MESSAGES_FILE: "smtp-messages.json",
 	SPOOL_DIR: "spool",
+	DATA_DIR: "data",
+	IP_BLOCK_DB_FILE: "ip-blocks.db",
 } as const;
 
 export interface CheckSettings {
@@ -228,6 +230,11 @@ export interface MailConfig {
 		maxRecipients: number;
 		trustedNetworks: string[];
 		rateLimit: { enabled: boolean; maxMessagesPerMinute: number };
+		ipBlocking: {
+			enabled: boolean;
+			temporaryBlockMinutes: number[];
+			strikeResetHours: number;
+		};
 		recipients: { acceptedDomains: string[]; knownRecipients: string[] };
 		checks: {
 			disposableSender: CheckSettings;
@@ -300,6 +307,11 @@ export const DEFAULT_MAIL_CONFIG: MailConfig = {
 		maxRecipients: 100,
 		trustedNetworks: ["127.0.0.0/8", "::1/128"],
 		rateLimit: { enabled: true, maxMessagesPerMinute: 100 },
+		ipBlocking: {
+			enabled: true,
+			temporaryBlockMinutes: [15, 60],
+			strikeResetHours: 24,
+		},
 		recipients: { acceptedDomains: [], knownRecipients: [] },
 		checks: {
 			disposableSender: { enabled: true },
@@ -388,6 +400,11 @@ export const DEFAULT_SMTP_MESSAGES = {
 		421,
 		"4.7.0",
 		"Too many requests from {ip}, try again in {seconds} seconds",
+	),
+	IP_BLOCKED: msg(
+		554,
+		"5.7.1",
+		"{ip} is blocked after repeated abuse, contact the postmaster to be unblocked",
 	),
 	MAILBOX_BUSY: msg(
 		450,

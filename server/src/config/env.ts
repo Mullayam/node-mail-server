@@ -91,6 +91,7 @@ export const env = {
 	},
 	paths: {
 		spoolDir: text("MAIL_SPOOL_DIR", join(process.cwd(), DEFAULTS.SPOOL_DIR)),
+		dataDir: text("MAIL_DATA_DIR", join(process.cwd(), DEFAULTS.DATA_DIR)),
 		mailConfig: text(
 			"MAIL_CONFIG_PATH",
 			join(configDir, DEFAULTS.MAIL_CONFIG_FILE),
