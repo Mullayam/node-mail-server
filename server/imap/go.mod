@@ -50,4 +50,4 @@ require (
 	google.golang.org/protobuf v1.33.0 // indirect
 )
 
-replace github.com/ProtonMail/gluon => github.com/enjoys-in/gluon v0.0.0-20261113122638-04bbc4a9bad2
+replace github.com/ProtonMail/gluon => github.com/enjoys-in/gluon v0.0.0-20261113175002-52469b335435
