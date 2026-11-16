@@ -88,3 +88,7 @@ func clamp(n int64) uint32 {
 	}
 	return uint32(n)
 }
+
+func (c *MyDBConnector) SetQuotaLimits(ctx context.Context, rootName string, limits []imap.QuotaLimit) (*imap.QuotaRoot, error) {
+	return nil, connector.ErrOperationNotAllowed
+}

@@ -250,6 +250,9 @@ func (c *MyDBConnector) CreateMessage(ctx context.Context, cache connector.IMAPS
 	if c.isStarred(string(mboxID)) {
 		flags = flags.Add(imap.FlagFlagged)
 	}
+	if date.IsZero() {
+		date = time.Now()
+	}
 	id, err := c.engine.CreateMessage(ctx, c.email, string(mboxID), literal, flags.ToSlice(), date)
 	if err != nil {
 		return imap.Message{}, nil, err

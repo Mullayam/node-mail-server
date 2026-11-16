@@ -2,6 +2,7 @@ package connector
 
 import (
 	"context"
+	"time"
 
 	"github.com/ProtonMail/gluon/connector"
 	"github.com/ProtonMail/gluon/imap"
@@ -27,7 +28,11 @@ func (c *MyDBConnector) CreateMessages(ctx context.Context, cache connector.IMAP
 		if starred {
 			flags = flags.Add(imap.FlagFlagged)
 		}
-		id, err := c.engine.CreateMessage(ctx, c.email, string(mboxID), m.Literal, flags.ToSlice(), m.Date)
+		date := m.Date
+		if date.IsZero() {
+			date = time.Now()
+		}
+		id, err := c.engine.CreateMessage(ctx, c.email, string(mboxID), m.Literal, flags.ToSlice(), date)
 		if err != nil {
 			stored := make([]imap.MessageID, 0, len(created))
 			for _, msg := range created {
@@ -38,7 +43,7 @@ func (c *MyDBConnector) CreateMessages(ctx context.Context, cache connector.IMAP
 			}
 			return nil, nil, err
 		}
-		created = append(created, imap.Message{ID: imap.MessageID(id), Flags: flags, Date: m.Date})
+		created = append(created, imap.Message{ID: imap.MessageID(id), Flags: flags, Date: date})
 		literals = append(literals, m.Literal)
 	}
 	return created, literals, nil
